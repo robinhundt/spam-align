@@ -1,0 +1,7 @@
+[package]
+name = "spam-align"
+version = "0.1.0"
+authors = ["robinwilliam.hundt <robinwilliam.hundt@stud.uni-goettingen.de>"]
+edition = "2018"
+
+[dependencies]
