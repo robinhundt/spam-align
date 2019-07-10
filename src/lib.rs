@@ -1,3 +1,8 @@
+pub mod data_loaders;
+pub mod dialign;
+pub mod score;
+pub mod spaced_word;
+
 #[cfg(test)]
 mod tests {
     #[test]
