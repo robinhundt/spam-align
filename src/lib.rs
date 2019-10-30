@@ -10,7 +10,7 @@ pub mod spaced_word;
 
 pub struct Sequences {
     seq_data: Vec<u8>,
-    seq_end_indices: Vec<usize>,
+    seq_start_indices: Vec<usize>,
 }
 
 pub struct Sequence<'a> {
@@ -19,28 +19,33 @@ pub struct Sequence<'a> {
 
 impl Sequences {
     pub fn new(alignment: &Alignment) -> Self {
-        let mut seq_end_indices = vec![];
+        let mut seq_indices = vec![];
         let seq_data = Vec::from_iter(
             alignment
                 .unaligned_data
                 .iter()
                 .map(|seq| {
-                    let end_idx = seq_end_indices.last().unwrap_or(&0) + seq.data.len();
-                    seq_end_indices.push(end_idx);
+                    let s_len = seq.data.len();
+                    let next_idx = match seq_indices.last() {
+                        Some((&start, &end)) => (end, end + s_len),
+                        None => (0, s_len),
+                    };
+                    seq_indices.push(next_idx);
                     seq.data.iter().copied()
                 })
                 .flatten(),
         );
+        let seq_start_indices = seq_indices.into_iter().map(|(start, end)| start).collect();
         Self {
             seq_data,
-            seq_end_indices,
+            seq_start_indices,
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Sequence> {
-        [0].iter()
-            .chain(self.seq_end_indices.iter())
-            .zip_longest(self.seq_end_indices.iter())
+        self.seq_start_indices
+            .iter()
+            .zip_longest(self.seq_start_indices.iter().skip(1))
             .map(move |bounds| {
                 let data = match bounds {
                     EitherOrBoth::Both(idx1, idx2) => &self.seq_data[*idx1..*idx2],
@@ -79,10 +84,10 @@ mod tests {
     #[test]
     fn sequence_iter() {
         let data = vec![1, 2, 3, 1, 2, 3, 4, 4, 4, 4, 4];
-        let indices = vec![3, 6, data.len()];
+        let indices = vec![0, 3, 6];
         let seqs = Sequences {
             seq_data: data,
-            seq_end_indices: indices,
+            seq_start_indices: indices,
         };
         let iter_seqs: Vec<_> = seqs.iter().map(|seq| seq.data.clone()).collect();
         assert_eq!(
