@@ -3,6 +3,7 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::str::FromStr;
 
+use fxhash::{hash, FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rand::prelude::*;
 use serde::de::Unexpected::Seq;
@@ -124,7 +125,8 @@ pub fn generate_random_patterns(
         .map(|_| {
             let len = rng.gen_range(min_len, max_len + 1);
             let weight = rng.gen_range(min_weight, max_weight + 1);
-            let mut match_positions: HashSet<usize> = HashSet::with_capacity(weight);
+            let mut match_positions: FxHashSet<usize> = HashSet::default();
+            match_positions.reserve(weight);
             while match_positions.len() < weight {
                 let match_pos = rng.gen_range(0, len);
                 match_positions.insert(match_pos);
@@ -142,14 +144,14 @@ pub fn generate_random_patterns(
         .collect()
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash)]
 pub struct SpacedWord {
     pub seq: usize,
     pub pos_in_seq: usize,
     pub dont_care_word: Word,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash)]
 pub struct SpacedWordMatch {
     pub fst_word: SpacedWord,
     pub snd_word: SpacedWord,
@@ -204,7 +206,8 @@ impl SpacedWordMatch {
         }
     }
 }
-
+//TODO provide a way to find matches for mutliple patterns at the same time,
+// should be much faster
 pub fn find_word_matches(
     pattern: &Pattern,
     sequences: &[Sequence],
@@ -217,14 +220,26 @@ pub fn find_word_matches(
         .map(Option::unwrap)
 }
 
+// TODO evaluate if  this is really what is supposed to be happening
 fn best_match(spaced_words: Vec<SpacedWord>) -> Option<SpacedWordMatch> {
     let spaced_word_match = spaced_words
         .into_iter()
         .tuple_combinations::<(SpacedWord, SpacedWord)>()
         .filter(|(word1, word2)| word1.seq != word2.seq)
-        .max_by_key(|(word1, word2)| {
-            score_prot_pairwise(&word1.dont_care_word, &word2.dont_care_word)
-        });
+        .fold((vec![], std::i32::MIN), |mut acc, (word1, word2)| {
+            let score = score_prot_pairwise(&word1.dont_care_word, &word2.dont_care_word);
+            if score > acc.1 {
+                acc.0.clear();
+                acc.0.push((word1, word2));
+                acc.1 = score;
+            } else if score == acc.1 {
+                acc.0.push((word1, word2));
+            }
+            acc
+        })
+        .0
+        .into_iter()
+        .max_by_key(|word_tuple| hash(word_tuple));
 
     spaced_word_match.map(|(fst_word, snd_word)| {
         let score = score_prot_pairwise(&fst_word.dont_care_word, &snd_word.dont_care_word);
@@ -235,12 +250,13 @@ fn best_match(spaced_words: Vec<SpacedWord>) -> Option<SpacedWordMatch> {
         }
     })
 }
-
+//TODO provide a way to find matches for mutliple patterns at the same time,
+// should be much faster
 pub fn find_word_match_buckets(
     pattern: &Pattern,
     sequences: &[Sequence],
-) -> HashMap<Word, Vec<SpacedWord>> {
-    let mut spaced_words_in_seqs: HashMap<Word, Vec<SpacedWord>> = HashMap::new();
+) -> FxHashMap<Word, Vec<SpacedWord>> {
+    let mut spaced_words_in_seqs: FxHashMap<Word, Vec<SpacedWord>> = FxHashMap::default();
 
     let spaced_word_iter = sequences
         .into_iter()
@@ -270,6 +286,8 @@ pub fn find_word_match_buckets(
     spaced_words_in_seqs
 }
 
+//TODO provide a way to find matches for mutliple patterns at the same time,
+// should be much faster
 fn word_matches_in_single_sequence<'b, 'a: 'b>(
     pattern: &'a Pattern,
     sequence: &'b [u8],
