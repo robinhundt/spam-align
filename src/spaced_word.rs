@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::str::FromStr;
 
@@ -10,6 +10,11 @@ use serde::de::Unexpected::Seq;
 
 use crate::data_loaders::{Alignment, Sequence, SequencePosition};
 use crate::score::score_prot_pairwise;
+use smallvec::SmallVec;
+use std::fs::File;
+use std::io::Read;
+use std::ops::Not;
+use std::path::Path;
 
 type BoxError = Box<dyn Error>;
 
@@ -52,6 +57,8 @@ pub type Word = Vec<u8>;
 
 #[allow(clippy::len_without_is_empty)]
 impl Pattern {
+    const MAX_WEIGHT: usize = 12;
+
     pub fn new(binary_pattern: &[u8]) -> Result<Self, BoxError> {
         let positions = binary_pattern
             .iter()
@@ -61,6 +68,14 @@ impl Pattern {
             .iter()
             .filter(|&&pos| pos == Position::Match)
             .count();
+        if weight > Self::MAX_WEIGHT {
+            Err(format!(
+                "Pattern max weight is {}, but pattern \"{:#?}\" has weight: {}",
+                Self::MAX_WEIGHT,
+                binary_pattern,
+                weight,
+            ))?;
+        }
         Ok(Pattern { weight, positions })
     }
 
@@ -77,7 +92,7 @@ impl Pattern {
     }
 
     /// returns the spaced word and the word of the don't care positions
-    pub fn match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word), BoxError> {
+    pub fn _match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word), BoxError> {
         if seq_slice.len() < self.len() {
             Err("Slice must be longer than pattern")?;
         }
@@ -96,6 +111,32 @@ impl Pattern {
             },
         ))
     }
+
+    pub fn match_slice(&self, seq_slice: &[u8]) -> MatchWord {
+        if seq_slice.len() != self.len() {
+            panic!("Slice must be as exactly as long as pattern");
+        }
+
+        let match_buf = self
+            .positions()
+            .iter()
+            .zip(seq_slice.iter())
+            .fold(
+                ([std::u8::MAX; Self::MAX_WEIGHT], 0_usize),
+                |(mut match_buf, mut match_cnt), (pattern_pos, &seq_pos)| {
+                    match pattern_pos {
+                        Position::Match => {
+                            match_buf[match_cnt] = seq_pos;
+                            match_cnt += 1;
+                        }
+                        Position::DontCare => (),
+                    };
+                    (match_buf, match_cnt)
+                },
+            )
+            .0;
+        MatchWord::from(match_buf)
+    }
 }
 
 impl FromStr for Pattern {
@@ -107,6 +148,86 @@ impl FromStr for Pattern {
                 .map(|ch| ch.to_digit(10).expect("Pattern must contain only 0 and 1") as u8)
                 .collect::<Vec<_>>(),
         )
+    }
+}
+
+pub fn read_patterns_from_file(path: impl AsRef<Path>) -> Result<Vec<Pattern>, Box<dyn Error>> {
+    let mut file = File::open(path)?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf);
+    buf.split("\n")
+        .filter(|s| s.len() != 0 && s.trim_start().starts_with("#").not())
+        .map(|s| s.parse())
+        .collect()
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+pub struct MatchWord(u64);
+
+// the [u8; 12] must contain protein char (e.g. 'A', 'F', 'M') as u8
+// if the number of match positions is less than 12, the unused postions
+// should be filled with std::u8::MAX
+impl From<[u8; 12]> for MatchWord {
+    fn from(arr: [u8; 12]) -> Self {
+        let mut res = 0_u64;
+
+        for (count, protein) in arr.into_iter().enumerate() {
+            let encoded = encode_protein_u8(*protein);
+            res |= (encoded as u64) << count * 5;
+        }
+        MatchWord(res)
+    }
+}
+
+impl From<MatchWord> for [u8; 12] {
+    fn from(word: MatchWord) -> Self {
+        let a = word.0;
+        let mut res = [std::u8::MAX; 12];
+        for count in 0..12 {
+            let mask = 0b11111_u64 << count * 5;
+            let mut encoded = (a & mask) >> count * 5;
+            if encoded == 0b11111_u64 {
+                encoded = std::u8::MAX as u64;
+            }
+            let decoded = decode_protein_u64(encoded);
+            res[count] = decoded;
+        }
+        res
+    }
+}
+
+fn encode_protein_u8(a: u8) -> u64 {
+    let mut a = a as char;
+    a.make_ascii_uppercase();
+    let a = a as u8;
+    if a == b'Y' {
+        23
+    } else if a == b'Z' {
+        24
+    } else if a == b'X' {
+        25
+    } else if a == b'*' {
+        26
+    } else if a == std::u8::MAX {
+        a as u64
+    } else {
+        (a - 65) as u64
+    }
+}
+
+fn decode_protein_u64(a: u64) -> u8 {
+    if a == 23 {
+        b'Y'
+    } else if a == 24 {
+        b'Z'
+    } else if a == 25 {
+        b'X'
+    } else if a == 26 {
+        b'*'
+    } else if a == std::u8::MAX as u64 {
+        a as u8
+    } else {
+        (a + 65) as u8
     }
 }
 
@@ -297,7 +418,7 @@ fn word_matches_in_single_sequence<'b, 'a: 'b>(
         .enumerate()
         .map(move |(start_pos, slice)| {
             let (match_word, dont_care_word) = pattern
-                .match_slice(slice)
+                ._match_slice(slice)
                 .expect("Bug in word_matches_in_single_sequence");
             (match_word, dont_care_word, start_pos)
         })
@@ -306,10 +427,29 @@ fn word_matches_in_single_sequence<'b, 'a: 'b>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::size_of;
 
     #[test]
     fn test_generate_random_patterns() {
         dbg!(generate_random_patterns(10, 6, 12, 3, 4));
         panic!();
+    }
+
+    #[test]
+    fn match_word_encoding() {
+        let max = std::u8::MAX;
+        let a = [
+            b'L', b'N', b'A', b'F', b'M', b'L', b'Y', b'M', b'K', b'E', max, max,
+        ];
+        let b = [
+            b'K', b'K', b'K', b'R', b'K', b'R', b'E', b'K', max, max, max, max,
+        ];
+        let c = [
+            b'K', b'K', b'K', b'R', b'K', b'R', b'E', b'K', b'K', b'R', b'E', b'K',
+        ];
+
+        assert_eq!(<[u8; 12]>::from(MatchWord::from(a)), a);
+        assert_eq!(<[u8; 12]>::from(MatchWord::from(b)), b);
+        assert_eq!(<[u8; 12]>::from(MatchWord::from(c)), c);
     }
 }

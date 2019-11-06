@@ -2,6 +2,9 @@ use bio::scores::blosum62::blosum62 as bio_blosum62;
 use itertools::Itertools;
 
 // TODO this could maybe be optimised by not casting to char (maybe premature)
+// also it might be beneficial to convert all sequence data into a format
+// that allows efficient computation of scores (see implementation of bio_blosum62 for why
+// it is inefficient at the moment)
 pub fn blosum62(a: u8, b: u8) -> i32 {
     let mut a = a as char;
     let mut b = b as char;
@@ -10,14 +13,14 @@ pub fn blosum62(a: u8, b: u8) -> i32 {
     bio_blosum62(a as u8, b as u8)
 }
 
-pub fn score_prot_msa(msa: &[&Vec<u8>]) -> f64 {
+pub fn score_prot_msa(msa: &[&[u8]]) -> i32 {
     let sum_score = msa
         .into_iter()
         .tuple_combinations::<(_, _)>()
         .fold(0, |acc, (seq_1, seq_2)| {
             acc + score_prot_pairwise(&seq_1, &seq_2)
         });
-    sum_score as f64 / msa.len() as f64
+    sum_score
 }
 
 pub fn score_prot_pairwise(seq_1: &[u8], seq_2: &[u8]) -> i32 {

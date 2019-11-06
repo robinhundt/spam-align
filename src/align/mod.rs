@@ -4,7 +4,9 @@ use ndarray::Array2;
 use crate::align::gabios::PartialAlignment;
 use crate::data_loaders::Sequence;
 use crate::score::score_prot_pairwise;
-use crate::spaced_word::{find_word_matches, generate_random_patterns, Pattern};
+use crate::spaced_word::{
+    find_word_matches, generate_random_patterns, read_patterns_from_file, Pattern,
+};
 use fxhash::hash;
 use std::iter::{FromIterator, Map, Zip};
 use std::ops::RangeInclusive;
@@ -73,7 +75,9 @@ impl EnumeratedSequence {
 }
 
 pub fn align(sequences: &[EnumeratedSequence]) -> (Vec<Diagonal>, PartialAlignment) {
-    let patterns = generate_random_patterns(5, 3, 10, 0, 3);
+    //    let patterns = generate_random_patterns(5, 3, 10, 0, 3);
+    let patterns = read_patterns_from_file("sample.pat").unwrap();
+    dbg!(&patterns);
     let mut diagonals = find_diagonals(sequences, &patterns).collect_vec();
     let max_seq_len = sequences
         .iter()

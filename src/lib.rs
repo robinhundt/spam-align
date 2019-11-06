@@ -1,18 +1,21 @@
+use crate::align::diagonal::Site;
 use crate::data_loaders::Alignment;
 use itertools::{EitherOrBoth, Itertools};
 use std::iter::FromIterator;
-use std::ops::Index;
+use std::ops::{Deref, Index, Range};
 
 pub mod align;
 pub mod data_loaders;
 pub mod score;
 pub mod spaced_word;
 
+#[derive(Debug)]
 pub struct Sequences {
     seq_data: Vec<u8>,
     seq_start_indices: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub struct Sequence<'a> {
     data: &'a [u8],
 }
@@ -27,8 +30,8 @@ impl Sequences {
                 .map(|seq| {
                     let s_len = seq.data.len();
                     let next_idx = match seq_indices.last() {
-                        Some((&start, &end)) => (end, end + s_len),
                         None => (0, s_len),
+                        Some(&(start, end)) => (end, end + s_len),
                     };
                     seq_indices.push(next_idx);
                     seq.data.iter().copied()
@@ -58,22 +61,38 @@ impl Sequences {
             })
     }
 
-    //    pub fn get(&self, index: usize) -> Sequence<'_> {
-    //        let start_pos = self.seq_start_indices[index];
-    //        let end_pos = self.seq_start_indices.get(index + 1);
-    //        let data = match end_pos {
-    //            Some(&end_pos) => &self.seq_data[start_pos..end_pos],
-    //            None => &self.seq_data[start_pos..],
-    //        };
-    //        Sequence { data }
-    //    }
+    pub fn len(&self) -> usize {
+        self.seq_start_indices.len()
+    }
+
+    // TODO possible optimization: store the actual bounds of the seq in Sequences to reduce
+    // branches in this code
+    pub fn get(&self, index: usize) -> Sequence<'_> {
+        let start_pos = self.seq_start_indices[index];
+        let end_pos = self.seq_start_indices.get(index + 1);
+        let data = match end_pos {
+            Some(&end_pos) => &self.seq_data[start_pos..end_pos],
+            None => &self.seq_data[start_pos..],
+        };
+        Sequence { data }
+    }
+
+    pub fn get_site_slice(&self, end_site: Site, slice_len: usize) -> &[u8] {
+        let start_pos = self.seq_start_indices[end_site.seq];
+        let end_pos = self.seq_start_indices.get(end_site.seq + 1);
+        let data = match end_pos {
+            Some(&end_pos) => &self.seq_data[start_pos..end_pos],
+            None => &self.seq_data[start_pos..],
+        };
+        &data[end_site.pos + 1 - slice_len..=end_site.pos]
+    }
 }
 
-impl Index<usize> for Sequence<'_> {
-    type Output = u8;
+impl Deref for Sequence<'_> {
+    type Target = [u8];
 
-    fn index(&self, index: usize) -> &Self::Output {
-        Index::index(self.data, index)
+    fn deref(&self) -> &Self::Target {
+        self.data
     }
 }
 
@@ -91,8 +110,8 @@ mod tests {
         };
         let iter_seqs: Vec<_> = seqs.iter().map(|seq| seq.data.clone()).collect();
         assert_eq!(
-            iter_seqs,
-            vec![vec![1, 2, 3], vec![1, 2, 3], vec![4, 4, 4, 4, 4]]
+            vec![vec![1, 2, 3], vec![1, 2, 3], vec![4, 4, 4, 4, 4]],
+            iter_seqs
         )
     }
 }
