@@ -77,14 +77,14 @@ impl Sequences {
         Sequence { data }
     }
 
-    pub fn get_site_slice(&self, end_site: Site, slice_len: usize) -> &[u8] {
-        let start_pos = self.seq_start_indices[end_site.seq];
-        let end_pos = self.seq_start_indices.get(end_site.seq + 1);
+    pub fn get_site_slice(&self, start_site: Site, slice_len: usize) -> &[u8] {
+        let start_pos = self.seq_start_indices[start_site.seq];
+        let end_pos = self.seq_start_indices.get(start_site.seq + 1);
         let data = match end_pos {
             Some(&end_pos) => &self.seq_data[start_pos..end_pos],
             None => &self.seq_data[start_pos..],
         };
-        &data[end_site.pos + 1 - slice_len..=end_site.pos]
+        &data[start_site.pos..start_site.pos + slice_len]
     }
 }
 
