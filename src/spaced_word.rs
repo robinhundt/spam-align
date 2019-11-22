@@ -432,7 +432,6 @@ mod tests {
     #[test]
     fn test_generate_random_patterns() {
         dbg!(generate_random_patterns(10, 6, 12, 3, 4));
-        panic!();
     }
 
     #[test]

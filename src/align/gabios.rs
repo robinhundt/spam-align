@@ -15,10 +15,8 @@ use std::vec::IntoIter;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransitiveClosure {
-    succ: TransitiveFrontier<usize>,
-    pred: TransitiveFrontier<usize>,
-
-    site_aligned_to_seq: SiteAlignment,
+    pub succ: TransitiveFrontier<usize>,
+    pub pred: TransitiveFrontier<usize>,
 
     succ_buf: TransitiveFrontier<usize>,
     pred_buf: TransitiveFrontier<usize>,
@@ -80,17 +78,19 @@ impl SiteAlignment {
 }
 
 impl TransitiveClosure {
+    const MIN_FRONTIER: usize = 0;
+    const MAX_FRONTIER: usize = std::usize::MAX;
+
     pub fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        let pred = TransitiveFrontier::new(max_seq_len, seq_cnt, 0);
-        let succ = TransitiveFrontier::new(max_seq_len, seq_cnt, std::usize::MAX);
-        let site_aligned_to_seq = SiteAlignment::new(max_seq_len, seq_cnt);
+        let pred = TransitiveFrontier::new(max_seq_len, seq_cnt, Self::MIN_FRONTIER);
+        let succ = TransitiveFrontier::new(max_seq_len, seq_cnt, Self::MAX_FRONTIER);
+
         let pred_buf = pred.clone();
         let succ_buf = succ.clone();
 
         Self {
             succ,
             pred,
-            site_aligned_to_seq,
             pred_buf,
             succ_buf,
         }
@@ -134,11 +134,7 @@ impl TransitiveClosure {
         let y_to_x_frontiers = self.pred[(y, x.seq)] == x.pos && x.pos == self.succ[(y, x.seq)];
         let equal_frontiers = x_to_y_frontiers && y_to_x_frontiers;
 
-        //        let x_to_y = self.site_aligned_to_seq[(x, y.seq)];
-        //        let y_to_x = self.site_aligned_to_seq[(y, x.seq)];
-        //        let sites_are_aligned = x_to_y && y_to_x;
-
-        equal_frontiers //&& sites_are_aligned
+        equal_frontiers
     }
 
     fn add_site_pair(&mut self, (site_a, site_b): (Site, Site)) {
@@ -210,9 +206,6 @@ impl TransitiveClosure {
 
         self.succ.clone_from(&self.succ_buf);
         self.pred.clone_from(&self.pred_buf);
-
-        self.site_aligned_to_seq[(site_a, site_b.seq)] = true;
-        self.site_aligned_to_seq[(site_b, site_a.seq)] = true;
     }
 
     fn lower_bound(&self, origin_site: Site, target_seq: usize) -> usize {
@@ -237,24 +230,55 @@ impl TransitiveClosure {
         }
     }
 
-    pub fn le(&self, left: Site, right: Site) -> bool {
+    pub fn less(&self, left: Site, right: Site) -> bool {
         let left = shift_site(left, 1);
         let right = shift_site(right, 1);
-        self.shifted_le(left, right)
+        self.shifted_less(left, right)
+    }
+
+    fn shifted_less(&self, left: Site, right: Site) -> bool {
+        let a = match self.pred[(right, left.seq)] {
+            Self::MIN_FRONTIER => false,
+            val => left.pos < val,
+        };
+        let b = match self.succ[(left, right.seq)] {
+            Self::MAX_FRONTIER => false,
+            val => val < right.pos,
+        };
+
+        a || b
     }
 
     fn shifted_le(&self, left: Site, right: Site) -> bool {
-        self.succ[(left, right.seq)] <= right.pos
+        match self.pred[(right, left.seq)] {
+            Self::MIN_FRONTIER => false,
+            val => left.pos <= val,
+        }
     }
 
-    pub fn ge(&self, left: Site, right: Site) -> bool {
+    pub fn greater(&self, left: Site, right: Site) -> bool {
         let left = shift_site(left, 1);
         let right = shift_site(right, 1);
-        self.shifted_ge(left, right)
+        self.shifted_greater(left, right)
+    }
+
+    fn shifted_greater(&self, left: Site, right: Site) -> bool {
+        let a = match self.succ[(right, left.seq)] {
+            Self::MAX_FRONTIER => false,
+            val => left.pos > val,
+        };
+        let b = match self.pred[(left, right.seq)] {
+            Self::MIN_FRONTIER => false,
+            val => val > right.pos,
+        };
+        a || b
     }
 
     fn shifted_ge(&self, left: Site, right: Site) -> bool {
-        self.pred[(left, right.seq)] >= right.pos
+        match self.succ[(right, left.seq)] {
+            Self::MAX_FRONTIER => false,
+            val => left.pos >= val,
+        }
     }
 }
 
@@ -266,7 +290,7 @@ fn shift_diagonal(diagonal: &mut Diagonal, shift: i64) {
     }
 }
 
-fn shift_site(a: Site, shift: i64) -> Site {
+pub fn shift_site(a: Site, shift: i64) -> Site {
     Site {
         seq: a.seq,
         pos: (i64::try_from(a.pos).unwrap() + shift).try_into().unwrap(),
@@ -405,11 +429,11 @@ mod tests {
 
     #[test]
     fn add_site_cycle() {
-        let mut closure = TransitiveClosure::new(15, 10);
+        let mut closure = TransitiveClosure::new(2, 3);
 
         let a = Site { seq: 0, pos: 1 };
-        let b = Site { seq: 1, pos: 6 };
-        let c = Site { seq: 2, pos: 8 };
+        let b = Site { seq: 1, pos: 1 };
+        let c = Site { seq: 2, pos: 1 };
 
         closure.add_site_pair((a, b));
         closure.add_site_pair((b, c));
@@ -459,5 +483,54 @@ mod tests {
             closure.add_site_pair(site_pair);
         }
         assert!(closure.shifted_sites_are_aligned(s!(1, 1), s!(3, 1)));
+    }
+
+    #[test]
+    fn greater_and_less() {
+        let mut closure = TransitiveClosure::new(15, 10);
+        let site_pairs = vec![(s!(0, 1), s!(1, 1))];
+
+        for site_pair in site_pairs.into_iter() {
+            closure.add_site_pair(site_pair);
+        }
+        assert!(closure.shifted_less(s!(0, 0), s!(1, 1)));
+        assert!(closure.shifted_greater(s!(0, 0), s!(1, 1)).not());
+
+        assert!(closure.shifted_greater(s!(1, 2), s!(0, 1)));
+        assert!(closure.shifted_less(s!(1, 2), s!(0, 1)).not());
+    }
+
+    #[test]
+    fn compare() {
+        let mut closure = TransitiveClosure::new(15, 10);
+        let site_pairs = vec![
+            (s!(0, 1), s!(1, 1)),
+            (s!(2, 1), s!(3, 1)),
+            (s!(1, 2), s!(2, 2)),
+        ];
+
+        for site_pair in site_pairs.into_iter() {
+            closure.add_site_pair(site_pair);
+        }
+
+        assert!(closure.shifted_greater(s!(1, 1), s!(2, 1)).not());
+        assert!(closure.shifted_less(s!(1, 1), s!(2, 1)).not());
+        assert!(closure.shifted_greater(s!(2, 2), s!(2, 1)));
+        assert!(closure.shifted_less(s!(2, 1), s!(2, 2)));
+    }
+
+    #[test]
+    fn ge_and_le() {
+        let mut closure = TransitiveClosure::new(15, 10);
+        let site_pairs = vec![(s!(0, 1), s!(1, 1))];
+
+        for site_pair in site_pairs.into_iter() {
+            closure.add_site_pair(site_pair);
+        }
+        assert!(closure.shifted_le(s!(0, 0), s!(1, 1)));
+        assert!(closure.shifted_ge(s!(0, 0), s!(1, 1)).not());
+
+        assert!(closure.shifted_ge(s!(1, 2), s!(0, 1)));
+        assert!(closure.shifted_le(s!(1, 2), s!(0, 1)).not());
     }
 }

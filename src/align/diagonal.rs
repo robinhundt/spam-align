@@ -1,7 +1,7 @@
 use crate::spaced_word::{MatchWord, Pattern};
 use crate::Sequences;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
+use itertools::{Group, GroupBy, Itertools};
 use ndarray::Array2;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -81,7 +81,7 @@ pub struct Site {
     pub pos: usize,
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub struct Match {
     key: MatchWord,
     start_site: Site,
@@ -98,7 +98,6 @@ pub fn construct_diagonals_from_patterns(
         .map(|seq| seq.len())
         .max()
         .expect("Can not construct diagonals from empty sequences");
-    //    let mut buf = Vec::with_capacity(max_seq_len * sequences.len() * patterns.len());
     patterns
         .par_iter()
         .map(|pattern| generate_sorted_matches(pattern, sequences, max_seq_len))
@@ -108,44 +107,10 @@ pub fn construct_diagonals_from_patterns(
                 .group_by(|pattern_match| pattern_match.key)
                 .into_iter()
                 .flat_map(|(key, match_group)| {
-                    let match_group: SmallVec<[Match; 32]> = SmallVec::from_iter(match_group);
-                    let max_n = max_n.unwrap_or(min(match_group.len(), sequences.len()));
-                    (2..=max_n)
-                        .flat_map(|match_dim| {
-                            // TODO combinations creates A LOT of vectors
-                            // this is bad in such a hot path
-
-                            // this code here is a big big problem since the number of combinations
-                            // is n over k where n is the number of elements in a match group
-                            // and k is the match_dim. For patterns with a log weight and thus big
-                            // match groups, this causes the program to try to allocate
-                            // a huge amount of memory (increases factorially
-                            // when choosing patterns with a low number of weight
-                            // the possible number of
-                            match_group
-                                .iter()
-                                .combinations(match_dim)
-                                .filter(|combinations| {
-                                    // TODO this uses a hashset internally and should probably be
-                                    // optimized
-                                    // combinations.0.start_site.seq != combinations.1.start_site.seq
-                                    combinations
-                                        .iter()
-                                        .unique_by(|pattern_match| pattern_match.start_site.seq)
-                                        .count()
-                                        == combinations.len()
-                                })
-                                .map(|combination| {
-                                    score_match_combination(
-                                        score_fn,
-                                        combination,
-                                        sequences,
-                                        pattern,
-                                    )
-                                })
-                        })
-                        .collect_vec()
-                        .into_iter()
+                    let mut match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
+                    generate_combinations(match_group).map(|combination| {
+                        score_match_combination(score_fn, combination, sequences, pattern)
+                    })
                 })
                 .collect_vec()
                 .into_par_iter()
@@ -176,11 +141,54 @@ fn generate_sorted_matches<'a, 'b>(
     (pattern, pattern_matches)
 }
 
-fn generate_combinations() {}
+fn generate_combinations(
+    mut match_group: SmallVec<[Match; 8]>,
+) -> impl Iterator<Item = Vec<Match>> {
+    match_group.sort_by_cached_key(|word_match| word_match.start_site.seq);
+    //    let match_group = match_group;
+    //    if match_group
+    //        .iter()
+    //        .group_by(|word_match| word_match.start_site.seq)
+    //        .into_iter()
+    //        .map(|a| a.1)
+    //        .fold(1, |acc, x| acc * x.count())
+    //        > 100
+    {
+        return Box::new(
+            match_group
+                .into_iter()
+                .combinations(2)
+                .filter(|combination| {
+                    combination[0].start_site.seq != combination[1].start_site.seq
+                }),
+        );
+    }
+    //    Box::new(
+    //        match_group
+    //            .into_iter()
+    //            .group_by(|word_match| word_match.start_site.seq)
+    //            .into_iter()
+    //            .map(|(_, group)| group.into_iter().collect_vec())
+    //            .multi_cartesian_product()
+    //            .filter(|combination| {
+    //                let unique_seq_cnt = combination
+    //                    .iter()
+    //                    .unique_by(|match_word| match_word.start_site.seq)
+    //                    .count();
+    //                assert_eq!(
+    //                    unique_seq_cnt,
+    //                    combination.len(),
+    //                    "Combination has sites with duplicate seq: {:?}",
+    //                    &combination
+    //                );
+    //                combination.len() > 1
+    //            }),
+    //    )
+}
 
 fn score_match_combination(
     score_fn: fn(&[&[u8]]) -> i32,
-    combination: Vec<&Match>,
+    combination: Vec<Match>,
     sequences: &Sequences,
     pattern: &Pattern,
 ) -> ScoredDiagonal {
@@ -226,7 +234,8 @@ mod tests {
                 .fold(0, |acc, diag| acc + diag.diag.start_sites.len()) as f64
                 / diags.len() as f64
         );
-        panic!()
+        assert!(diags.len() > 0);
+        Ok(())
     }
 
     #[test]
@@ -262,5 +271,21 @@ mod tests {
             (Site { seq: 2, pos: 6 }, Site { seq: 4, pos: 5 }),
         ];
         assert_eq!(diag.site_pair_iter().collect_vec(), expected);
+    }
+
+    #[test]
+    fn generate_combinations_test() {
+        macro_rules! m {
+            ($seq:expr) => {
+                Match {
+                    key: MatchWord::from([100; 12]),
+                    start_site: Site { seq: $seq, pos: 0 },
+                }
+            };
+        }
+        let match_group: SmallVec<[Match; 8]> =
+            SmallVec::from_vec(vec![m!(1), m!(2), m!(2), m!(3)]);
+        let expected = vec![vec![m!(1), m!(2), m!(3)], vec![m!(1), m!(2), m!(3)]];
+        assert_eq!(generate_combinations(match_group).collect_vec(), expected)
     }
 }

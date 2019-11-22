@@ -2,11 +2,16 @@ use std::cmp::Ordering;
 use std::iter::FromIterator;
 
 use crate::align::diagonal::{Diagonal, Site};
-use crate::align::gabios::TransitiveClosure;
+use crate::align::gabios::{shift_site, TransitiveClosure};
 use crate::data_loaders::Sequence;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::{repeat_n, Itertools};
-use std::ops::Not;
+use petgraph::algo::toposort;
+use petgraph::csr::NodeIndex;
+use petgraph::visit::{IntoNeighborsDirected, IntoNodeIdentifiers};
+use petgraph::Graph;
+use std::collections::HashSet;
+use std::ops::{Deref, Not};
 
 #[derive(Debug, Clone, Default)]
 pub struct EqClasses {
@@ -19,6 +24,17 @@ impl EqClasses {
         for diag in diagonals {
             'outer: for (site_a, site_b) in diag.site_pair_iter() {
                 for class in &mut classes {
+                    let all_aligned = class
+                        .iter()
+                        .all(|site| closure.sites_are_aligned(*site, site_a));
+                    let any_aligned = class
+                        .iter()
+                        .any(|site| closure.sites_are_aligned(*site, site_a));
+
+                    if any_aligned && all_aligned.not() {
+                        println!("Broke transitivity again!")
+                    }
+
                     match class.iter().take(1).next() {
                         Some(&site) => {
                             if closure.sites_are_aligned(site, site_a) {
@@ -49,7 +65,7 @@ impl EqClasses {
                 class.len(),
                 "Class has sites with duplicate seq: {:?}",
                 &class
-            )
+            );
         }
 
         let mut unsorted_self = Self { classes };
@@ -57,23 +73,29 @@ impl EqClasses {
     }
 
     fn sort_self(mut self, closure: &TransitiveClosure) -> Self {
-        self.classes.sort_by(|a, b| {
-            for site_a in a {
-                for site_b in b {
-                    return if a == b {
-                        Ordering::Equal
-                    } else if closure.le(*site_a, *site_b) {
-                        Ordering::Less
-                    } else if closure.ge(*site_a, *site_b) {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    };
+        let mut graph = Graph::<&FxHashSet<Site>, ()>::new();
+        let mut node_indices = vec![];
+        for eq_class in &self.classes {
+            node_indices.push(graph.add_node(eq_class));
+        }
+
+        for idx1 in &node_indices {
+            for idx2 in &node_indices {
+                let class1 = graph.node_weight(*idx1).unwrap();
+                let class2 = graph.node_weight(*idx2).unwrap();
+                let repr1 = get_el_from_hashset(class1);
+                let repr2 = get_el_from_hashset(class2);
+                if closure.less(*repr1, *repr2) {
+                    graph.add_edge(*idx1, *idx2, ());
                 }
             }
-            unreachable!("Called sort_self with empty eq classes!")
-        });
-        println!("Sorted EqClasses\n{:?}", self.classes);
+        }
+        let sorted_indices = toposort(&graph, None).unwrap();
+        let sorted_classes = sorted_indices
+            .into_iter()
+            .map(|idx| graph.node_weight(idx).unwrap().deref().clone())
+            .collect_vec();
+        self.classes = sorted_classes;
         self
     }
 
@@ -88,14 +110,16 @@ impl EqClasses {
                 .pos;
             let mut shifted_by: FxHashMap<usize, usize> = FxHashMap::default();
             shifted_by.reserve(class.len());
+            println!("Handling class {:?}", class);
             for site in &class {
                 let shift = max_pos - site.pos;
                 if shift == 0 {
                     continue;
                 }
+                println!("Adding shift of {} at: {:?}", shift, &site);
                 seqs[site.seq]
                     .data
-                    .splice(site.pos..site.pos, repeat_n(b'-', max_pos - site.pos));
+                    .splice(site.pos..site.pos, repeat_n(b'-', shift));
                 shifted_by.insert(site.seq, shift);
             }
             classes = classes
@@ -115,4 +139,8 @@ impl EqClasses {
                 .collect();
         }
     }
+}
+
+fn get_el_from_hashset<E>(hashset: &FxHashSet<E>) -> &E {
+    hashset.iter().next().unwrap()
 }
