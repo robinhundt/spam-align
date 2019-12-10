@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 use std::iter::FromIterator;
 
-use crate::align::diagonal::{Diagonal, Site};
 use crate::align::gabios::{shift_site, TransitiveClosure};
+use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::data_loaders::Sequence;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::{repeat_n, Itertools};
@@ -19,7 +19,7 @@ pub struct EqClasses {
 }
 
 impl EqClasses {
-    pub fn new(diagonals: &[Diagonal], closure: &TransitiveClosure) -> Self {
+    pub fn new(diagonals: &[MicroAlignment], closure: &TransitiveClosure) -> Self {
         let mut classes: Vec<FxHashSet<Site>> = vec![];
         for diag in diagonals {
             'outer: for (site_a, site_b) in diag.site_pair_iter() {

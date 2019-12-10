@@ -1,4 +1,4 @@
-use crate::align::diagonal::Site;
+use crate::align::micro_alignment::Site;
 use crate::data_loaders::Alignment;
 use itertools::{EitherOrBoth, Itertools};
 use std::iter::FromIterator;
@@ -63,6 +63,10 @@ impl Sequences {
 
     pub fn len(&self) -> usize {
         self.seq_start_indices.len()
+    }
+
+    pub fn total_len(&self) -> usize {
+        self.seq_data.len()
     }
 
     // TODO possible optimization: store the actual bounds of the seq in Sequences to reduce

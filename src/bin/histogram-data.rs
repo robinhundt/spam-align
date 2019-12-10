@@ -12,9 +12,7 @@ use structopt::StructOpt;
 use spam_align::data_loaders::balibase;
 use spam_align::data_loaders::balibase::{BBAlignment, FilterXmlFile};
 use spam_align::score::{score_prot_msa, score_prot_pairwise};
-use spam_align::spaced_word::{
-    find_word_match_buckets, find_word_matches, MatchConsistency, Pattern,
-};
+use spam_align::spaced_word::{find_word_match_buckets, find_word_matches, Pattern};
 
 #[derive(StructOpt, Debug)]
 struct Opt {
@@ -26,7 +24,7 @@ struct Opt {
     pattern: Pattern,
 }
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let opt = Opt::from_args();
 
     let alignment = balibase::parse_xml_file(opt.in_file).unwrap();
@@ -34,15 +32,16 @@ fn main() -> Result<(), Box<Error>> {
 
     let mut buffered_file = BufWriter::new(File::create(opt.out_file).unwrap());
 
-    for spaced_word_match in find_word_matches(&pattern, &alignment.unaligned_data) {
-        let consistent = spaced_word_match.is_consistent(pattern.len(), &alignment);
-        let consistent = match consistent {
-            MatchConsistency::Inconsistent => -1,
-            MatchConsistency::PartiallyConsistent => 0,
-            MatchConsistency::Consistent => 1,
-        };
-        buffered_file.write(format!("{};{}\n", spaced_word_match.score, consistent).as_bytes());
-    }
+    //    for spaced_word_match in find_word_matches(&pattern, &alignment.unaligned_data) {
+    //        let consistent = spaced_word_match.is_consistent(pattern.len(), &alignment);
+    //        let consistent = match consistent {
+    //            MatchConsistency::Inconsistent => -1,
+    //            MatchConsistency::PartiallyConsistent => 0,
+    //            MatchConsistency::Consistent => 1,
+    //            MatchConsistency::Unknown => 2,
+    //        };
+    //        buffered_file.write(format!("{};{}\n", spaced_word_match.score, consistent).as_bytes());
+    //    }
 
     Ok(())
 }

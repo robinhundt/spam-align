@@ -51,9 +51,9 @@ impl From<BBAlignment> for Alignment {
             .data
             .split(" ")
             .map(|block| {
-                let block_num: i32 = block
-                    .parse()
-                    .expect("Encountered non i32 in core block data");
+                let block_num: i32 = block.trim().parse().unwrap_or_else(|_| {
+                    panic!("Encountered non i32 in core block data: {}", block)
+                });
                 block_num == 0 || block_num == 1
             })
             .collect();
@@ -83,10 +83,16 @@ impl From<BBSequence> for Sequence {
 }
 
 pub fn parse_xml_file(path: impl AsRef<Path>) -> Result<Alignment, Box<dyn Error>> {
-    let file = File::open(&path)?;
-    let xml_root: XMLRoot = from_reader(file)?;
-    let bb_alignment = xml_root.alignment;
+    let bb_alignment = BBAlignment::from_xml_file(path)?;
     Ok(bb_alignment.into())
+}
+
+pub fn parse_xml_files_in_dir(
+    path: impl AsRef<Path>,
+    file_filter: FilterXmlFile,
+) -> Result<Vec<Alignment>, Box<dyn Error>> {
+    let bb_alignments = BBAlignment::from_xml_files_in_dir(path, file_filter)?;
+    Ok(bb_alignments.into_iter().map(|a| a.into()).collect())
 }
 
 impl BBAlignment {

@@ -8,7 +8,7 @@ use itertools::Itertools;
 use rand::prelude::*;
 use serde::de::Unexpected::Seq;
 
-use crate::data_loaders::{Alignment, Sequence, SequencePosition};
+use crate::data_loaders::{Alignment, PositionAlignment, Sequence};
 use crate::score::score_prot_pairwise;
 use smallvec::SmallVec;
 use std::fs::File;
@@ -47,7 +47,7 @@ impl TryFrom<&u8> for Position {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Pattern {
     weight: usize,
     positions: Vec<Position>,
@@ -279,54 +279,6 @@ pub struct SpacedWordMatch {
     pub score: i32,
 }
 
-#[derive(Debug, Clone)]
-pub enum MatchConsistency {
-    Consistent,
-    Inconsistent,
-    PartiallyConsistent,
-}
-
-impl SpacedWordMatch {
-    pub fn is_consistent(&self, spaced_word_len: usize, alignment: &Alignment) -> MatchConsistency {
-        let fst_range = self.fst_word.pos_in_seq..self.fst_word.pos_in_seq + spaced_word_len;
-        let snd_range = self.snd_word.pos_in_seq..self.snd_word.pos_in_seq + spaced_word_len;
-
-        let positions = fst_range
-            .zip(snd_range)
-            .map(|(pos1, pos2)| {
-                let pos1 = SequencePosition {
-                    seq: self.fst_word.seq,
-                    pos: pos1,
-                };
-                let pos2 = SequencePosition {
-                    seq: self.snd_word.seq,
-                    pos: pos2,
-                };
-                (pos1, pos2)
-            })
-            .collect_vec();
-
-        let all_positions_aligned = || {
-            positions
-                .iter()
-                .all(|(pos1, pos2)| alignment.pos_aligned(pos1, pos2))
-        };
-
-        let partial_positions_aligned = || {
-            positions
-                .iter()
-                .any(|(pos1, pos2)| alignment.pos_aligned(pos1, pos2))
-        };
-
-        if all_positions_aligned() {
-            MatchConsistency::Consistent
-        } else if partial_positions_aligned() {
-            MatchConsistency::PartiallyConsistent
-        } else {
-            MatchConsistency::Inconsistent
-        }
-    }
-}
 //TODO provide a way to find matches for mutliple patterns at the same time,
 // should be much faster
 pub fn find_word_matches(

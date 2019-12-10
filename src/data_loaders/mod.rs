@@ -1,6 +1,8 @@
+use crate::align::micro_alignment::{MicroAlignment, Site};
 use serde::export::fmt::Error;
 use serde::export::Formatter;
 use std::fmt;
+use std::ops::Not;
 use std::str;
 
 pub mod balibase;
@@ -20,10 +22,20 @@ pub struct Sequence {
     pub data: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct SequencePosition {
-    pub seq: usize,
-    pub pos: usize,
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
+pub enum PositionAlignment {
+    Correct,
+    Incorrect,
+    Unknown,
+}
+
+#[derive(Eq, PartialEq, Hash, Debug)]
+pub enum MicroAlignmentCheck {
+    Correct,
+    PartiallyCorrectIncorrect,
+    PartiallyCorrectUnknown,
+    Incorrect,
+    Unknown,
 }
 
 impl Alignment {
@@ -42,9 +54,18 @@ impl Alignment {
         }
     }
 
-    pub fn pos_aligned(&self, pos1: &SequencePosition, pos2: &SequencePosition) -> bool {
+    pub fn pos_aligned(&self, pos1: Site, pos2: Site) -> PositionAlignment {
         let pos_mapping = &self.unaligned_to_aligned_pos;
-        pos_mapping[pos1.seq][pos1.pos] == pos_mapping[pos2.seq][pos2.pos]
+        let mapped_1 = pos_mapping[pos1.seq][pos1.pos];
+        let mapped_2 = pos_mapping[pos2.seq][pos2.pos];
+        if mapped_1 == mapped_2 && self.core_blocks[mapped_1] {
+            PositionAlignment::Correct
+        } else if mapped_1 != mapped_2 {
+            PositionAlignment::Incorrect
+        } else {
+            // mapped to position is not part of core block region
+            PositionAlignment::Unknown
+        }
     }
 }
 

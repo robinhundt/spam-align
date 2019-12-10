@@ -1,20 +1,23 @@
-use crate::align::diagonal::{construct_diagonals_from_patterns, ScoredDiagonal};
 use crate::align::gabios::TransitiveClosure;
+use crate::align::micro_alignment::{
+    construct_micro_alignments_from_patterns, ScoredMicroAlignment,
+};
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
 use crate::Sequences;
 use itertools::Itertools;
 
-pub mod diagonal;
 pub mod eq_class;
 pub mod gabios;
+pub mod micro_alignment;
 
 pub fn align(
     sequences: &Sequences,
     patterns: &[Pattern],
-) -> (Vec<ScoredDiagonal>, TransitiveClosure) {
-    let mut diagonals =
-        construct_diagonals_from_patterns(patterns, sequences, score_prot_msa, Some(2));
+) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {
+    let diagonals =
+        construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
+    let mut diagonals = diagonals.collect_vec();
     diagonals.sort_by_cached_key(|diag| -diag.score);
 
     println!("Found {} diagonals", diagonals.len());
@@ -33,7 +36,7 @@ pub fn align(
             if id % 1000 == 0 {
                 println!("Adding no {}", id);
             }
-            if transitive_closure.add_diagonal(&mut scored_diag.diag) {
+            if transitive_closure.add_diagonal(&mut scored_diag.micro_alignment) {
                 Some(scored_diag)
             } else {
                 None

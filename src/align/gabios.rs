@@ -3,7 +3,7 @@ use std::ops::{Deref, Index, IndexMut, Not};
 
 use ndarray::{s, Array3, ArrayView2, ArrayViewMut2, Axis};
 
-use crate::align::diagonal::{Diagonal, Site};
+use crate::align::micro_alignment::{MicroAlignment, Site};
 use itertools::Itertools;
 use rayon::iter::IntoParallelRefIterator;
 use std::cell::RefCell;
@@ -96,7 +96,7 @@ impl TransitiveClosure {
         }
     }
 
-    pub fn add_diagonal(&mut self, diagonal: &mut Diagonal) -> bool {
+    pub fn add_diagonal(&mut self, diagonal: &mut MicroAlignment) -> bool {
         let mut added = false;
         // we shift the Diagonal because Sequences starting at pos 1 is easier for the algo
         shift_diagonal(diagonal, 1);
@@ -116,7 +116,7 @@ impl TransitiveClosure {
         self.shifted_sites_are_aligned(x, y)
     }
 
-    fn alignable_site_pairs<'a>(&'a self, diag: &'a Diagonal) -> Vec<(Site, Site)> {
+    fn alignable_site_pairs<'a>(&'a self, diag: &'a MicroAlignment) -> Vec<(Site, Site)> {
         let consistent = diag.site_pair_iter().all(|(Site { seq, pos }, x)| {
             self.lower_bound(x, seq) <= pos && pos <= self.upper_bound(x, seq)
         });
@@ -282,7 +282,7 @@ impl TransitiveClosure {
     }
 }
 
-fn shift_diagonal(diagonal: &mut Diagonal, shift: i64) {
+fn shift_diagonal(diagonal: &mut MicroAlignment, shift: i64) {
     for start_site in diagonal.start_sites.iter_mut() {
         start_site.pos = (i64::try_from(start_site.pos).unwrap() + shift)
             .try_into()
@@ -376,12 +376,12 @@ mod tests {
 
     #[test]
     fn shift_diagonal_test() {
-        let mut diag = Diagonal {
+        let mut diag = MicroAlignment {
             start_sites: SmallVec::from_vec(vec![Site { seq: 2, pos: 3 }, Site { seq: 4, pos: 6 }]),
             k: 2,
         };
 
-        let mut expected_diag = Diagonal {
+        let mut expected_diag = MicroAlignment {
             start_sites: SmallVec::from_vec(vec![Site { seq: 2, pos: 4 }, Site { seq: 4, pos: 7 }]),
             k: 2,
         };
