@@ -1,18 +1,13 @@
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::path::PathBuf;
 
-use bio::io::fasta::Reader;
-use itertools::Itertools;
-use rayon::prelude::*;
 use structopt::StructOpt;
 
 use spam_align::data_loaders::balibase;
-use spam_align::data_loaders::balibase::{BBAlignment, FilterXmlFile};
-use spam_align::score::{score_prot_msa, score_prot_pairwise};
-use spam_align::spaced_word::{find_word_match_buckets, find_word_matches, Pattern};
+//use spam_align::data_loaders::balibase::{BBAlignment, FilterXmlFile};
+use spam_align::spaced_word::Pattern;
 
 #[derive(StructOpt, Debug)]
 struct Opt {
@@ -27,10 +22,10 @@ struct Opt {
 fn main() -> Result<(), Box<dyn Error>> {
     let opt = Opt::from_args();
 
-    let alignment = balibase::parse_xml_file(opt.in_file).unwrap();
-    let pattern = opt.pattern;
+    let _alignment = balibase::parse_xml_file(opt.in_file).unwrap();
+    let _pattern = opt.pattern;
 
-    let mut buffered_file = BufWriter::new(File::create(opt.out_file).unwrap());
+    let mut _buffered_file = BufWriter::new(File::create(opt.out_file).unwrap());
 
     //    for spaced_word_match in find_word_matches(&pattern, &alignment.unaligned_data) {
     //        let consistent = spaced_word_match.is_consistent(pattern.len(), &alignment);

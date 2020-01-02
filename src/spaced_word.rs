@@ -1,16 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::convert::{TryFrom, TryInto};
+use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::error::Error;
 use std::str::FromStr;
 
 use fxhash::{hash, FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rand::prelude::*;
-use serde::de::Unexpected::Seq;
 
-use crate::data_loaders::{Alignment, PositionAlignment, Sequence};
+use crate::data_loaders::Sequence;
 use crate::score::score_prot_pairwise;
-use smallvec::SmallVec;
 use std::fs::File;
 use std::io::Read;
 use std::ops::Not;
@@ -154,7 +152,7 @@ impl FromStr for Pattern {
 pub fn read_patterns_from_file(path: impl AsRef<Path>) -> Result<Vec<Pattern>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let mut buf = String::new();
-    file.read_to_string(&mut buf);
+    file.read_to_string(&mut buf)?;
     buf.split("\n")
         .filter(|s| s.len() != 0 && s.trim_start().starts_with("#").not())
         .map(|s| s.parse())

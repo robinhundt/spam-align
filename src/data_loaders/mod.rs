@@ -1,8 +1,6 @@
-use crate::align::micro_alignment::{MicroAlignment, Site};
-use serde::export::fmt::Error;
+use crate::align::micro_alignment::Site;
 use serde::export::Formatter;
 use std::fmt;
-use std::ops::Not;
 use std::str;
 
 pub mod balibase;
@@ -81,7 +79,7 @@ impl Sequence {
             .data
             .into_iter()
             .enumerate()
-            .filter(|(pos, el)| *el != b'-')
+            .filter(|(_, el)| *el != b'-')
             .unzip();
         let unaligned_sequence = Self {
             name: self.name,

@@ -2,7 +2,7 @@ use crate::align::micro_alignment::Site;
 use crate::data_loaders::Alignment;
 use itertools::{EitherOrBoth, Itertools};
 use std::iter::FromIterator;
-use std::ops::{Deref, Index, Range};
+use std::ops::Deref;
 
 pub mod align;
 pub mod data_loaders;
@@ -31,14 +31,14 @@ impl Sequences {
                     let s_len = seq.data.len();
                     let next_idx = match seq_indices.last() {
                         None => (0, s_len),
-                        Some(&(start, end)) => (end, end + s_len),
+                        Some(&(_start, end)) => (end, end + s_len),
                     };
                     seq_indices.push(next_idx);
                     seq.data.iter().copied()
                 })
                 .flatten(),
         );
-        let seq_start_indices = seq_indices.into_iter().map(|(start, end)| start).collect();
+        let seq_start_indices = seq_indices.into_iter().map(|(start, _end)| start).collect();
         Self {
             seq_data,
             seq_start_indices,
@@ -53,7 +53,7 @@ impl Sequences {
                 let data = match bounds {
                     EitherOrBoth::Both(idx1, idx2) => &self.seq_data[*idx1..*idx2],
                     EitherOrBoth::Left(idx) => &self.seq_data[*idx..],
-                    EitherOrBoth::Right(idx) => unreachable!(
+                    EitherOrBoth::Right(_) => unreachable!(
                         "The left iterator should never be exhausted before the right one"
                     ),
                 };

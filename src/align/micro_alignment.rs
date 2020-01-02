@@ -1,12 +1,10 @@
 use crate::spaced_word::{MatchWord, Pattern};
 use crate::Sequences;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::{Group, GroupBy, Itertools};
-use ndarray::Array2;
+use itertools::Itertools;
 use rayon::prelude::*;
 use smallvec::SmallVec;
-use std::cmp::min;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -38,7 +36,7 @@ impl MicroAlignment {
             .zip(self.start_sites.iter().skip(1))
             .flat_map(move |(site_a, site_b)| {
                 (site_a.pos..site_a.pos + self.k)
-                    .zip((site_b.pos..site_b.pos + self.k))
+                    .zip(site_b.pos..site_b.pos + self.k)
                     .map(move |(pos_a, pos_b)| {
                         (
                             Site {
@@ -99,7 +97,7 @@ pub struct Match {
 pub fn compute_multi_dim_micro_alignment_information(
     patterns: &[Pattern],
     sequences: &Sequences,
-    score_fn: fn(&[&[u8]]) -> i32,
+    //    score_fn: fn(&[&[u8]]) -> i32,
 ) -> FxHashMap<usize, usize> {
     let max_seq_len = sequences
         .iter()
@@ -113,7 +111,7 @@ pub fn compute_multi_dim_micro_alignment_information(
             .into_iter()
             .group_by(|pattern_match| pattern_match.key)
             .into_iter()
-            .for_each(|(_, mut matches)| {
+            .for_each(|(_, matches)| {
                 let mut matches: SmallVec<[Match; 8]> = SmallVec::from_iter(matches);
                 matches.sort_by_cached_key(|word_match| word_match.start_site.seq);
                 let dim = matches
@@ -161,8 +159,7 @@ pub fn construct_micro_alignments_from_patterns<'a>(
                 .into_iter()
                 .flat_map(
                     move |(_, match_group)| -> Box<dyn Iterator<Item = ScoredMicroAlignment>> {
-                        let mut match_group: SmallVec<[Match; 8]> =
-                            SmallVec::from_iter(match_group);
+                        let match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
                         let mut scored_combinations = generate_combinations(match_group)
                             .map(|combination| {
                                 score_match_combination(score_fn, combination, sequences, pattern)
@@ -204,9 +201,7 @@ fn generate_sorted_matches(
     pattern_matches
 }
 
-fn generate_combinations(
-    mut match_group: SmallVec<[Match; 8]>,
-) -> impl Iterator<Item = Vec<Match>> {
+fn generate_combinations(match_group: SmallVec<[Match; 8]>) -> impl Iterator<Item = Vec<Match>> {
     //    match_group.sort_by_cached_key(|word_match| word_match.start_site.seq);
     //    let match_group = match_group;
     //    if match_group
@@ -283,7 +278,7 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
                 .map(|start_site| start_site.seq),
         )
     });
-    let mut ma_in_same_seqs = data.into_iter().group_by(|ma| {
+    let ma_in_same_seqs = data.into_iter().group_by(|ma| {
         FxHashSet::from_iter(
             ma.micro_alignment
                 .start_sites
@@ -292,7 +287,7 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
         )
     });
     let mut one_to_one_mapping = vec![];
-    for (_, mut micro_alignments) in ma_in_same_seqs.into_iter() {
+    for (_, micro_alignments) in ma_in_same_seqs.into_iter() {
         let mut micro_alignments = micro_alignments.collect_vec();
         micro_alignments.sort_by_cached_key(|ma: &ScoredMicroAlignment| ma.score);
         while let Some(micro_alignment) = micro_alignments.pop() {

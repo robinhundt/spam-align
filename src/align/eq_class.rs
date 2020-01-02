@@ -1,16 +1,10 @@
-use std::cmp::Ordering;
-use std::iter::FromIterator;
-
-use crate::align::gabios::{shift_site, TransitiveClosure};
+use crate::align::gabios::TransitiveClosure;
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::data_loaders::Sequence;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::{repeat_n, Itertools};
 use petgraph::algo::toposort;
-use petgraph::csr::NodeIndex;
-use petgraph::visit::{IntoNeighborsDirected, IntoNodeIdentifiers};
 use petgraph::Graph;
-use std::collections::HashSet;
 use std::ops::{Deref, Not};
 
 #[derive(Debug, Clone, Default)]
@@ -68,7 +62,7 @@ impl EqClasses {
             );
         }
 
-        let mut unsorted_self = Self { classes };
+        let unsorted_self = Self { classes };
         unsorted_self.sort_self(closure)
     }
 
@@ -110,13 +104,14 @@ impl EqClasses {
                 .pos;
             let mut shifted_by: FxHashMap<usize, usize> = FxHashMap::default();
             shifted_by.reserve(class.len());
-            println!("Handling class {:?}", class);
+            //            println!("Handling class {:?}", class);
             for site in &class {
+                seqs[site.seq].data[site.pos].make_ascii_uppercase();
                 let shift = max_pos - site.pos;
                 if shift == 0 {
                     continue;
                 }
-                println!("Adding shift of {} at: {:?}", shift, &site);
+                //                println!("Adding shift of {} at: {:?}", shift, &site);
                 seqs[site.seq]
                     .data
                     .splice(site.pos..site.pos, repeat_n(b'-', shift));

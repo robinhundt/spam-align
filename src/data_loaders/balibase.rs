@@ -3,12 +3,13 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::path::Path;
 
+use quick_xml::de::from_reader;
 use serde::Deserialize;
-use serde_xml_rs::from_reader;
 
 use FilterXmlFile::*;
 
 use crate::data_loaders::{Alignment, Sequence};
+use std::io::BufReader;
 
 #[derive(Debug, Deserialize)]
 struct XMLRoot {
@@ -97,7 +98,7 @@ pub fn parse_xml_files_in_dir(
 
 impl BBAlignment {
     pub fn from_xml_file(path: impl AsRef<Path>) -> Result<BBAlignment, Box<dyn Error>> {
-        let file = File::open(&path)?;
+        let file = BufReader::new(File::open(&path)?);
         let xml_root: XMLRoot = from_reader(file)?;
         Ok(xml_root.alignment)
     }

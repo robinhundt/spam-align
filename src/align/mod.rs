@@ -44,10 +44,6 @@ pub fn align(
         })
         .collect_vec();
 
-    for x in &added_diagonals {
-        for y in &added_diagonals {}
-    }
-
     (added_diagonals, transitive_closure)
 }
 

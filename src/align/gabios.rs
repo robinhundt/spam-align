@@ -1,17 +1,11 @@
-use core::borrow::BorrowMut;
-use std::ops::{Deref, Index, IndexMut, Not};
+use std::ops::{Index, IndexMut};
 
-use ndarray::{s, Array3, ArrayView2, ArrayViewMut2, Axis};
+use ndarray::{s, Array3, ArrayView2, Axis};
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use itertools::Itertools;
-use rayon::iter::IntoParallelRefIterator;
-use std::cell::RefCell;
-use std::cmp::{max, min, Ordering};
+use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
-use std::slice::{Iter, IterMut};
-use std::sync::{Arc, Mutex, RwLock};
-use std::vec::IntoIter;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransitiveClosure {
@@ -138,8 +132,8 @@ impl TransitiveClosure {
     }
 
     fn add_site_pair(&mut self, (site_a, site_b): (Site, Site)) {
-        for (origin_seq, mut target_pos_view) in self.succ.iter_origin_sequences().enumerate() {
-            'next_target: for (target_seq, pos_view) in
+        for (origin_seq, target_pos_view) in self.succ.iter_origin_sequences().enumerate() {
+            'next_target_succ: for (target_seq, pos_view) in
                 target_pos_view.axis_iter(Axis(0)).enumerate()
             {
                 for pos in 1..pos_view.len() {
@@ -164,14 +158,14 @@ impl TransitiveClosure {
                             self.succ[(origin_site, target_seq)]
                         };
                     if no_further_changes {
-                        continue 'next_target;
+                        continue 'next_target_succ;
                     }
                 }
             }
         }
 
-        for (origin_seq, mut target_pos_view) in self.pred.iter_origin_sequences().enumerate() {
-            'next_target: for (target_seq, pos_view) in
+        for (origin_seq, target_pos_view) in self.pred.iter_origin_sequences().enumerate() {
+            'next_target_pred: for (target_seq, pos_view) in
                 target_pos_view.axis_iter(Axis(0)).enumerate()
             {
                 for pos in (1..pos_view.len()).rev() {
@@ -198,7 +192,7 @@ impl TransitiveClosure {
                             // next iteration of the target_pos_view for loop
                         };
                     if no_further_changes {
-                        continue 'next_target;
+                        continue 'next_target_pred;
                     }
                 }
             }
