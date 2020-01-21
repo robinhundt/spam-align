@@ -51,4 +51,4 @@ for line in weight_and_dont_care_position_combinations.strip().split('\n'):
     subprocess.run(
         [rasbhari_path, '--nosens', *patterns_per_set, *background_match_prob,
          *match_prob, *sequence_length, *homologue_region_length,
-         '-w', weight, '-d', dont_care, '--outfile', f'w-{weight}_d-{dont_care}.out'])
+         '-w', weight, '-d', dont_care, '--outfile', f'./data/w-{weight}_d-{dont_care}.out'])

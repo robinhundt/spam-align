@@ -65,6 +65,13 @@ impl Alignment {
             PositionAlignment::Unknown
         }
     }
+
+    pub fn core_block_data(&self) -> Vec<Sequence> {
+        self.aligned_data
+            .iter()
+            .map(|seq| seq.select_core_blocks(&self.core_blocks))
+            .collect()
+    }
 }
 
 impl Sequence {
@@ -86,6 +93,22 @@ impl Sequence {
             data: no_gap_data,
         };
         (unaligned_sequence, positions)
+    }
+
+    fn select_core_blocks(&self, core_blocks: &[bool]) -> Self {
+        if self.data.len() != core_blocks.len() {
+            panic!("Sequence len must be equal to core blocks len")
+        }
+        let data = self
+            .data
+            .iter()
+            .zip(core_blocks)
+            .filter_map(|(el, core_block)| if *core_block { Some(*el) } else { None })
+            .collect();
+        Self {
+            name: self.name.clone(),
+            data,
+        }
     }
 }
 

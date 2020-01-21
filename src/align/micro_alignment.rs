@@ -270,6 +270,7 @@ fn score_match_combination(
 }
 
 fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<ScoredMicroAlignment> {
+    // TODO this method seems overly complex and could likely be improved
     data.sort_by_cached_key(|ma| {
         BTreeSet::from_iter(
             ma.micro_alignment
@@ -291,11 +292,12 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
         let mut micro_alignments = micro_alignments.collect_vec();
         micro_alignments.sort_by_cached_key(|ma: &ScoredMicroAlignment| ma.score);
         while let Some(micro_alignment) = micro_alignments.pop() {
+            let diag_start_sites =
+                FxHashSet::from_iter(micro_alignment.micro_alignment.start_sites.iter());
+            // TODO here the retain method could be used
             micro_alignments = micro_alignments
                 .into_iter()
                 .filter(|el| {
-                    let diag_start_sites =
-                        FxHashSet::from_iter(micro_alignment.micro_alignment.start_sites.iter());
                     let el_start_sites =
                         FxHashSet::from_iter(el.micro_alignment.start_sites.iter());
                     diag_start_sites.is_disjoint(&el_start_sites)

@@ -53,7 +53,7 @@ where
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SiteAlignment {
+pub struct SiteAlignment {
     data: Array3<bool>,
 }
 
@@ -158,6 +158,7 @@ impl TransitiveClosure {
                             self.succ[(origin_site, target_seq)]
                         };
                     if no_further_changes {
+                        // TODO wouldn't a simple break here achieve the same and be simpler?
                         continue 'next_target_succ;
                     }
                 }
@@ -188,10 +189,10 @@ impl TransitiveClosure {
                         } else {
                             no_further_changes = true;
                             self.pred[(origin_site, target_seq)]
-                            // TODO when this happens, it's probably correct to skip to the
-                            // next iteration of the target_pos_view for loop
                         };
                     if no_further_changes {
+                        // TODO wouldn't a simple break here achieve the same and be simpler?
+
                         continue 'next_target_pred;
                     }
                 }
@@ -335,6 +336,7 @@ mod tests {
     use itertools::Itertools;
     use ndarray::{arr2, arr3};
     use smallvec::SmallVec;
+    use std::ops::Not;
 
     macro_rules! s {
         ($seq:expr, $pos:expr) => {

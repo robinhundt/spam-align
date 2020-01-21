@@ -55,7 +55,7 @@ impl From<BBAlignment> for Alignment {
                 let block_num: i32 = block.trim().parse().unwrap_or_else(|_| {
                     panic!("Encountered non i32 in core block data: {}", block)
                 });
-                block_num == 0 || block_num == 1
+                block_num == 1
             })
             .collect();
         let seqs = bb_alignment

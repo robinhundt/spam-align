@@ -1,0 +1,357 @@
+{
+  "path": "./data/bb3_release/RV12",
+  "results": [
+    {
+      "name": "ref1/v2/1bgl_ref1",
+      "true_positive_site_pair_count": 18392,
+      "false_positive_site_pair_count": 154792,
+      "true_site_pair_count": 44408,
+      "precision": 0.10619918699186992,
+      "recall": 0.41415961088092235
+    },
+    {
+      "name": "ref1/v2/5ptp_ref1",
+      "true_positive_site_pair_count": 33580,
+      "false_positive_site_pair_count": 368668,
+      "true_site_pair_count": 78540,
+      "precision": 0.08348083769217,
+      "recall": 0.4275528393175452
+    },
+    {
+      "name": "ref1/v2/2fxb_ref1",
+      "true_positive_site_pair_count": 1462,
+      "false_positive_site_pair_count": 5952,
+      "true_site_pair_count": 3850,
+      "precision": 0.197194496897761,
+      "recall": 0.37974025974025977
+    },
+    {
+      "name": "ref1/v2/1tis_ref1",
+      "true_positive_site_pair_count": 792,
+      "false_positive_site_pair_count": 2876,
+      "true_site_pair_count": 2604,
+      "precision": 0.2159214830970556,
+      "recall": 0.30414746543778803
+    },
+    {
+      "name": "ref1/v2/1gowA_ref1",
+      "true_positive_site_pair_count": 4598,
+      "false_positive_site_pair_count": 30452,
+      "true_site_pair_count": 11256,
+      "precision": 0.13118402282453637,
+      "recall": 0.40849324804548687
+    },
+    {
+      "name": "ref1/v2/1aho_ref1",
+      "true_positive_site_pair_count": 926,
+      "false_positive_site_pair_count": 1378,
+      "true_site_pair_count": 2072,
+      "precision": 0.4019097222222222,
+      "recall": 0.4469111969111969
+    },
+    {
+      "name": "ref1/v2/1rthA_ref1",
+      "true_positive_site_pair_count": 2348,
+      "false_positive_site_pair_count": 56336,
+      "true_site_pair_count": 5310,
+      "precision": 0.04001090586872061,
+      "recall": 0.4421845574387947
+    },
+    {
+      "name": "ref1/v2/1aym3_ref1",
+      "true_positive_site_pair_count": 760,
+      "false_positive_site_pair_count": 2172,
+      "true_site_pair_count": 1992,
+      "precision": 0.2592087312414734,
+      "recall": 0.3815261044176707
+    },
+    {
+      "name": "ref1/v2/1led_ref1",
+      "true_positive_site_pair_count": 1068,
+      "false_positive_site_pair_count": 2798,
+      "true_site_pair_count": 2016,
+      "precision": 0.2762545266425246,
+      "recall": 0.5297619047619048
+    },
+    {
+      "name": "ref1/v2/glg_ref1",
+      "true_positive_site_pair_count": 18618,
+      "false_positive_site_pair_count": 134704,
+      "true_site_pair_count": 49720,
+      "precision": 0.12143071444411109,
+      "recall": 0.3744569589702333
+    },
+    {
+      "name": "ref1/v2/1fjlA_ref1",
+      "true_positive_site_pair_count": 1314,
+      "false_positive_site_pair_count": 2856,
+      "true_site_pair_count": 3096,
+      "precision": 0.31510791366906477,
+      "recall": 0.42441860465116277
+    },
+    {
+      "name": "ref1/v2/1ad2_ref1",
+      "true_positive_site_pair_count": 944,
+      "false_positive_site_pair_count": 5928,
+      "true_site_pair_count": 4110,
+      "precision": 0.13736903376018628,
+      "recall": 0.229683698296837
+    },
+    {
+      "name": "ref1/v2/2cba_ref1",
+      "true_positive_site_pair_count": 5104,
+      "false_positive_site_pair_count": 52774,
+      "true_site_pair_count": 10710,
+      "precision": 0.08818549362452055,
+      "recall": 0.4765639589169001
+    },
+    {
+      "name": "ref1/v2/1ac5_ref1",
+      "true_positive_site_pair_count": 10342,
+      "false_positive_site_pair_count": 76976,
+      "true_site_pair_count": 26840,
+      "precision": 0.11844064225016605,
+      "recall": 0.3853204172876304
+    },
+    {
+      "name": "ref1/v2/1fieA_ref1",
+      "true_positive_site_pair_count": 12690,
+      "false_positive_site_pair_count": 83886,
+      "true_site_pair_count": 27048,
+      "precision": 0.13139910536779323,
+      "recall": 0.4691659272404614
+    },
+    {
+      "name": "ref1/v2/1ezm_ref1",
+      "true_positive_site_pair_count": 940,
+      "false_positive_site_pair_count": 5762,
+      "true_site_pair_count": 1968,
+      "precision": 0.14025663980901223,
+      "recall": 0.47764227642276424
+    },
+    {
+      "name": "ref1/v2/1thm_ref1",
+      "true_positive_site_pair_count": 2844,
+      "false_positive_site_pair_count": 33602,
+      "true_site_pair_count": 6762,
+      "precision": 0.07803325467815399,
+      "recall": 0.42058562555456963
+    },
+    {
+      "name": "ref1/v2/1ar5A_ref1",
+      "true_positive_site_pair_count": 3978,
+      "false_positive_site_pair_count": 11436,
+      "true_site_pair_count": 9864,
+      "precision": 0.25807707279096925,
+      "recall": 0.4032846715328467
+    },
+    {
+      "name": "ref1/v2/1gtr_ref1",
+      "true_positive_site_pair_count": 4336,
+      "false_positive_site_pair_count": 33334,
+      "true_site_pair_count": 8120,
+      "precision": 0.11510485797717016,
+      "recall": 0.5339901477832513
+    },
+    {
+      "name": "ref1/v2/2ack_ref1",
+      "true_positive_site_pair_count": 15254,
+      "false_positive_site_pair_count": 223568,
+      "true_site_pair_count": 39000,
+      "precision": 0.06387183760290091,
+      "recall": 0.3911282051282051
+    },
+    {
+      "name": "ref1/v2/1pysA_ref1",
+      "true_positive_site_pair_count": 13340,
+      "false_positive_site_pair_count": 100116,
+      "true_site_pair_count": 25740,
+      "precision": 0.11757862078691299,
+      "recall": 0.5182595182595182
+    },
+    {
+      "name": "ref1/v2/1ton_ref1",
+      "true_positive_site_pair_count": 26630,
+      "false_positive_site_pair_count": 166946,
+      "true_site_pair_count": 60372,
+      "precision": 0.13756870686448733,
+      "recall": 0.4410985224938713
+    },
+    {
+      "name": "ref1/v2/1hfh_ref1",
+      "true_positive_site_pair_count": 210,
+      "false_positive_site_pair_count": 874,
+      "true_site_pair_count": 828,
+      "precision": 0.1937269372693727,
+      "recall": 0.2536231884057971
+    },
+    {
+      "name": "ref1/v2/2mhr_ref1",
+      "true_positive_site_pair_count": 704,
+      "false_positive_site_pair_count": 1664,
+      "true_site_pair_count": 1920,
+      "precision": 0.2972972972972973,
+      "recall": 0.36666666666666664
+    },
+    {
+      "name": "ref1/v2/1ppn_ref1",
+      "true_positive_site_pair_count": 2974,
+      "false_positive_site_pair_count": 15304,
+      "true_site_pair_count": 6944,
+      "precision": 0.16270926797242588,
+      "recall": 0.42828341013824883
+    },
+    {
+      "name": "ref1/v2/1lcf_ref1",
+      "true_positive_site_pair_count": 3408,
+      "false_positive_site_pair_count": 31724,
+      "true_site_pair_count": 9920,
+      "precision": 0.0970055789593533,
+      "recall": 0.3435483870967742
+    },
+    {
+      "name": "ref1/v2/1csp_ref1",
+      "true_positive_site_pair_count": 482,
+      "false_positive_site_pair_count": 778,
+      "true_site_pair_count": 1280,
+      "precision": 0.3825396825396825,
+      "recall": 0.3765625
+    },
+    {
+      "name": "ref1/v2/1pkm_ref1",
+      "true_positive_site_pair_count": 6276,
+      "false_positive_site_pair_count": 133476,
+      "true_site_pair_count": 19188,
+      "precision": 0.044908122960673195,
+      "recall": 0.32707942464040024
+    },
+    {
+      "name": "ref1/v2/1krn_ref1",
+      "true_positive_site_pair_count": 538,
+      "false_positive_site_pair_count": 3686,
+      "true_site_pair_count": 1020,
+      "precision": 0.12736742424242425,
+      "recall": 0.5274509803921569
+    },
+    {
+      "name": "ref1/v2/1fkj_ref1",
+      "true_positive_site_pair_count": 2932,
+      "false_positive_site_pair_count": 21420,
+      "true_site_pair_count": 7920,
+      "precision": 0.12040078843626807,
+      "recall": 0.3702020202020202
+    },
+    {
+      "name": "ref1/v2/1gpb_ref1",
+      "true_positive_site_pair_count": 4218,
+      "false_positive_site_pair_count": 23352,
+      "true_site_pair_count": 8040,
+      "precision": 0.1529923830250272,
+      "recall": 0.5246268656716417
+    },
+    {
+      "name": "ref1/v2/1fmb_ref1",
+      "true_positive_site_pair_count": 558,
+      "false_positive_site_pair_count": 11652,
+      "true_site_pair_count": 1460,
+      "precision": 0.0457002457002457,
+      "recall": 0.3821917808219178
+    },
+    {
+      "name": "ref1/v2/1dlc_ref1",
+      "true_positive_site_pair_count": 16208,
+      "false_positive_site_pair_count": 321178,
+      "true_site_pair_count": 46464,
+      "precision": 0.04803993052468093,
+      "recall": 0.3488292011019284
+    },
+    {
+      "name": "ref1/v2/1zin_ref1",
+      "true_positive_site_pair_count": 2862,
+      "false_positive_site_pair_count": 6812,
+      "true_site_pair_count": 6804,
+      "precision": 0.2958445317345462,
+      "recall": 0.42063492063492064
+    },
+    {
+      "name": "ref1/v2/3pmg_ref1",
+      "true_positive_site_pair_count": 604,
+      "false_positive_site_pair_count": 12680,
+      "true_site_pair_count": 3480,
+      "precision": 0.04546823246010238,
+      "recall": 0.1735632183908046
+    },
+    {
+      "name": "ref1/v2/1tgxA_ref1",
+      "true_positive_site_pair_count": 748,
+      "false_positive_site_pair_count": 1080,
+      "true_site_pair_count": 1944,
+      "precision": 0.40919037199124725,
+      "recall": 0.38477366255144035
+    },
+    {
+      "name": "ref1/v2/3cyr_ref1",
+      "true_positive_site_pair_count": 894,
+      "false_positive_site_pair_count": 2646,
+      "true_site_pair_count": 1932,
+      "precision": 0.25254237288135595,
+      "recall": 0.46273291925465837
+    },
+    {
+      "name": "ref1/v2/1amk_ref1",
+      "true_positive_site_pair_count": 13066,
+      "false_positive_site_pair_count": 51520,
+      "true_site_pair_count": 31920,
+      "precision": 0.20230390487102468,
+      "recall": 0.4093358395989975
+    },
+    {
+      "name": "ref1/v2/1hpi_ref1",
+      "true_positive_site_pair_count": 704,
+      "false_positive_site_pair_count": 526,
+      "true_site_pair_count": 1170,
+      "precision": 0.5723577235772358,
+      "recall": 0.6017094017094017
+    },
+    {
+      "name": "ref1/v2/1pfc_ref1",
+      "true_positive_site_pair_count": 200,
+      "false_positive_site_pair_count": 2068,
+      "true_site_pair_count": 768,
+      "precision": 0.08818342151675485,
+      "recall": 0.2604166666666667
+    },
+    {
+      "name": "ref1/v2/1pii_ref1",
+      "true_positive_site_pair_count": 23836,
+      "false_positive_site_pair_count": 107032,
+      "true_site_pair_count": 48042,
+      "precision": 0.18213772656417154,
+      "recall": 0.4961492027809
+    },
+    {
+      "name": "ref1/v2/1daaA_ref1",
+      "true_positive_site_pair_count": 3240,
+      "false_positive_site_pair_count": 17696,
+      "true_site_pair_count": 8652,
+      "precision": 0.15475735575085978,
+      "recall": 0.37447988904299584
+    },
+    {
+      "name": "ref1/v2/1bucA_ref1",
+      "true_positive_site_pair_count": 12728,
+      "false_positive_site_pair_count": 121872,
+      "true_site_pair_count": 42276,
+      "precision": 0.09456166419019317,
+      "recall": 0.30106916453779925
+    },
+    {
+      "name": "ref1/v2/1taq_ref1",
+      "true_positive_site_pair_count": 27100,
+      "false_positive_site_pair_count": 249646,
+      "true_site_pair_count": 60390,
+      "precision": 0.09792372789489279,
+      "recall": 0.4487497930120881
+    }
+  ]
+}
