@@ -1,11 +1,12 @@
 use crate::align::gabios::TransitiveClosure;
-use crate::align::micro_alignment::{MicroAlignment, Site};
+use crate::align::micro_alignment::{ScoredMicroAlignment, Site};
 use crate::data_loaders::Sequence;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::{repeat_n, Itertools};
 use petgraph::algo::toposort;
 use petgraph::Graph;
 use std::ops::{Deref, Not};
+use std::vec::IntoIter;
 
 #[derive(Debug, Clone, Default)]
 pub struct EqClasses {
@@ -13,7 +14,7 @@ pub struct EqClasses {
 }
 
 impl EqClasses {
-    pub fn new(diagonals: &[MicroAlignment], closure: &TransitiveClosure) -> Self {
+    pub fn new(diagonals: &[ScoredMicroAlignment], closure: &TransitiveClosure) -> Self {
         let mut classes: Vec<FxHashSet<Site>> = vec![];
         for diag in diagonals {
             'outer: for (site_a, site_b) in diag.site_pair_iter() {
@@ -138,4 +139,13 @@ impl EqClasses {
 
 fn get_el_from_hashset<E>(hashset: &FxHashSet<E>) -> &E {
     hashset.iter().next().unwrap()
+}
+
+impl IntoIterator for EqClasses {
+    type Item = FxHashSet<Site>;
+    type IntoIter = IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.classes.into_iter()
+    }
 }

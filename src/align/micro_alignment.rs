@@ -82,6 +82,12 @@ pub struct ScoredMicroAlignment {
     pub score: i32,
 }
 
+impl ScoredMicroAlignment {
+    pub fn site_pair_iter(&self) -> impl Iterator<Item = (Site, Site)> + '_ {
+        self.micro_alignment.site_pair_iter()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Site {
     pub seq: usize,
@@ -113,7 +119,7 @@ pub fn compute_multi_dim_micro_alignment_information(
             .into_iter()
             .for_each(|(_, matches)| {
                 let mut matches: SmallVec<[Match; 8]> = SmallVec::from_iter(matches);
-                matches.sort_by_cached_key(|word_match| word_match.start_site.seq);
+                matches.sort_unstable_by_key(|word_match| word_match.start_site.seq);
                 let dim = matches
                     .into_iter()
                     .group_by(|pattern_match| pattern_match.start_site.seq)
@@ -197,12 +203,12 @@ fn generate_sorted_matches(
             });
         }
     }
-    pattern_matches.sort_by_cached_key(|pattern_match| pattern_match.key);
+    pattern_matches.sort_unstable_by_key(|pattern_match| pattern_match.key);
     pattern_matches
 }
 
 fn generate_combinations(match_group: SmallVec<[Match; 8]>) -> impl Iterator<Item = Vec<Match>> {
-    //    match_group.sort_by_cached_key(|word_match| word_match.start_site.seq);
+    //    match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
     //    let match_group = match_group;
     //    if match_group
     //        .iter()
@@ -271,7 +277,7 @@ fn score_match_combination(
 
 fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<ScoredMicroAlignment> {
     // TODO this method seems overly complex and could likely be improved
-    data.sort_by_cached_key(|ma| {
+    data.sort_unstable_by_key(|ma| {
         BTreeSet::from_iter(
             ma.micro_alignment
                 .start_sites
@@ -290,7 +296,7 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
     let mut one_to_one_mapping = vec![];
     for (_, micro_alignments) in ma_in_same_seqs.into_iter() {
         let mut micro_alignments = micro_alignments.collect_vec();
-        micro_alignments.sort_by_cached_key(|ma: &ScoredMicroAlignment| ma.score);
+        micro_alignments.sort_unstable_by_key(|ma: &ScoredMicroAlignment| ma.score);
         while let Some(micro_alignment) = micro_alignments.pop() {
             let diag_start_sites =
                 FxHashSet::from_iter(micro_alignment.micro_alignment.start_sites.iter());

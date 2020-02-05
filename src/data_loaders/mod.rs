@@ -1,7 +1,10 @@
 use crate::align::micro_alignment::Site;
 use serde::export::Formatter;
-use std::fmt;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
 use std::str;
+use std::{fmt, io};
 
 pub mod balibase;
 
@@ -135,4 +138,11 @@ pub fn format_as_fasta(seqs: &[Sequence]) -> String {
         buf.push_str(&format!("{}\n", seq))
     }
     buf
+}
+
+pub fn write_as_fasta(path: impl AsRef<Path>, seqs: &[Sequence]) -> io::Result<()> {
+    let mut file = File::create(path)?;
+    let formatted = format_as_fasta(seqs);
+    file.write(formatted.as_bytes())?;
+    Ok(())
 }

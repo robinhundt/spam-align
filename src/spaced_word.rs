@@ -169,7 +169,7 @@ impl From<[u8; 12]> for MatchWord {
     fn from(arr: [u8; 12]) -> Self {
         let mut res = 0_u64;
 
-        for (count, protein) in arr.into_iter().enumerate() {
+        for (count, protein) in arr.iter().enumerate() {
             let encoded = encode_protein_u8(*protein);
             res |= (encoded as u64) << count * 5;
         }

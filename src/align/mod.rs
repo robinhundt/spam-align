@@ -5,6 +5,7 @@ use crate::align::micro_alignment::{
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
 use crate::Sequences;
+use indicatif::{ProgressBar, ProgressIterator};
 use itertools::Itertools;
 
 pub mod eq_class;
@@ -28,14 +29,13 @@ pub fn align(
         .len();
 
     let mut transitive_closure = TransitiveClosure::new(max_seq_len, sequences.len());
-
+    let num_diagonals = diagonals.len();
+    let progress_bar = ProgressBar::new(num_diagonals as u64);
+    progress_bar.set_draw_delta(num_diagonals as u64 / 100);
     let added_diagonals = diagonals
         .into_iter()
-        .enumerate()
-        .filter_map(|(id, mut scored_diag)| {
-            if id % 1000 == 0 {
-                println!("Adding no {}", id);
-            }
+        .progress_with(progress_bar)
+        .filter_map(|mut scored_diag| {
             if transitive_closure.add_diagonal(&mut scored_diag.micro_alignment) {
                 Some(scored_diag)
             } else {
