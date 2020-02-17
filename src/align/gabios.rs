@@ -1,83 +1,86 @@
+use std::cmp::{max, min};
+use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
 use std::ops::{Index, IndexMut};
 
-use ndarray::{s, Array3, ArrayView2, Axis};
+use fxhash::FxHashMap;
+use itertools::Itertools;
+use ndarray::{s, Array2, Array3, ArrayView2, Axis};
+use num_integer::Integer;
+use petgraph::graph::IndexType;
+use petgraph::unionfind::UnionFind;
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
-use itertools::Itertools;
-use std::cmp::{max, min};
-use std::convert::{TryFrom, TryInto};
+use std::cell::Cell;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TransitiveClosure {
-    pub succ: TransitiveFrontier<usize>,
-    pub pred: TransitiveFrontier<usize>,
+    pub succ: TransitiveFrontier,
+    pub pred: TransitiveFrontier,
 
-    succ_buf: TransitiveFrontier<usize>,
-    pred_buf: TransitiveFrontier<usize>,
+    succ_buf: TransitiveFrontier,
+    pred_buf: TransitiveFrontier,
 }
 
-/// TransitiveFrontiers store information
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransitiveFrontier<E: Eq + Ord + Clone + Copy> {
-    data: Array3<E>,
-}
+///// TransitiveFrontiers store information
+//#[derive(Clone, Debug, Eq, PartialEq)]
+//pub struct TransitiveFrontier<E: Eq + Ord + Clone + Copy> {
+//    data: Array3<E>,
+//}
+//
+//impl<E> TransitiveFrontier<E>
+//where
+//    E: Eq + Ord + Clone + Copy,
+//    E: From<usize>,
+//{
+//    /// Creates a new transitivity frontier with dimensions $$seq_cnt x seq_cnt x max_seq_len$$
+//    /// It is initialized such that for every sequence, the consistency bounds with
+//    /// itself are equal to the corresponding position. For example: after initialization the
+//    /// consistency bound for the Site(seq: 3, pos: 4) to seq: 3 will be 4, since a position
+//    /// in a sequence can only be aligned with itself in the same sequence
+//    ///
+//    /// The first dimension corresponds to the target sequence, the second to the origin sequence
+//    /// and the last dimension to the position in the origin sequence
+//    pub fn new(max_seq_len: usize, seq_cnt: usize, default: E) -> Self {
+//        let mut data = Array3::from_elem((seq_cnt, seq_cnt, max_seq_len + 2), default);
+//        for i in 0..seq_cnt {
+//            data.slice_mut(s!(i, i, ..))
+//                .iter_mut()
+//                .enumerate()
+//                .for_each(|(idx, data)| *data = idx.into())
+//        }
+//
+//        Self { data }
+//    }
+//
+//    pub fn iter_origin_sequences(&self) -> impl Iterator<Item = ArrayView2<'_, E>> {
+//        self.data.axis_iter(Axis(0))
+//    }
+//}
 
-impl<E> TransitiveFrontier<E>
-where
-    E: Eq + Ord + Clone + Copy,
-    E: From<usize>,
-{
-    /// Creates a new transitivity frontier with dimensions $$seq_cnt x seq_cnt x max_seq_len$$
-    /// It is initialized such that for every sequence, the consistency bounds with
-    /// itself are equal to the corresponding position. For example: after initialization the
-    /// consistency bound for the Site(seq: 3, pos: 4) to seq: 3 will be 4, since a position
-    /// in a sequence can only be aligned with itself in the same sequence
-    ///
-    /// The first dimension corresponds to the target sequence, the second to the origin sequence
-    /// and the last dimension to the position in the origin sequence
-    pub fn new(max_seq_len: usize, seq_cnt: usize, default: E) -> Self {
-        let mut data = Array3::from_elem((seq_cnt, seq_cnt, max_seq_len + 2), default);
-        for i in 0..seq_cnt {
-            data.slice_mut(s!(i, i, ..))
-                .iter_mut()
-                .enumerate()
-                .for_each(|(idx, data)| *data = idx.into())
-        }
-
-        Self { data }
-    }
-
-    pub fn iter_origin_sequences(&self) -> impl Iterator<Item = ArrayView2<'_, E>> {
-        self.data.axis_iter(Axis(0))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SiteAlignment {
-    data: Array3<bool>,
-}
-
-impl SiteAlignment {
-    pub fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        let mut data = Array3::from_elem((seq_cnt, seq_cnt, max_seq_len + 2), false);
-        for i in 0..seq_cnt {
-            // every position in a sequence is aligned with itself
-            data.slice_mut(s!(i, i, ..))
-                .iter_mut()
-                .for_each(|data| *data = true)
-        }
-
-        Self { data }
-    }
-}
+//#[derive(Clone, Debug, Eq, PartialEq)]
+//pub struct SiteAlignment {
+//    data: Array3<bool>,
+//}
+//
+//impl SiteAlignment {
+//    pub fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
+//        let mut data = Array3::from_elem((seq_cnt, seq_cnt, max_seq_len + 2), false);
+//        for i in 0..seq_cnt {
+//            // every position in a sequence is aligned with itself
+//            data.slice_mut(s!(i, i, ..))
+//                .iter_mut()
+//                .for_each(|data| *data = true)
+//        }
+//
+//        Self { data }
+//    }
+//}
 
 impl TransitiveClosure {
-    const MIN_FRONTIER: usize = 0;
-    const MAX_FRONTIER: usize = std::usize::MAX;
-
     pub fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        let pred = TransitiveFrontier::new(max_seq_len, seq_cnt, Self::MIN_FRONTIER);
-        let succ = TransitiveFrontier::new(max_seq_len, seq_cnt, Self::MAX_FRONTIER);
+        let pred = TransitiveFrontier::new(max_seq_len + 2, seq_cnt, FrontierKind::Pred);
+        let succ = TransitiveFrontier::new(max_seq_len + 2, seq_cnt, FrontierKind::Succ);
 
         let pred_buf = pred.clone();
         let succ_buf = succ.clone();
@@ -112,6 +115,10 @@ impl TransitiveClosure {
 
     fn alignable_site_pairs<'a>(&'a self, diag: &'a MicroAlignment) -> Vec<(Site, Site)> {
         let consistent = diag.site_pair_iter().all(|(Site { seq, pos }, x)| {
+            if seq == 2 && pos == 40 {
+                let a = self.lower_bound(x, seq);
+                let b = self.upper_bound(x, seq);
+            }
             self.lower_bound(x, seq) <= pos && pos <= self.upper_bound(x, seq)
         });
         if !consistent {
@@ -124,88 +131,99 @@ impl TransitiveClosure {
     }
 
     fn shifted_sites_are_aligned(&self, x: Site, y: Site) -> bool {
-        let x_to_y_frontiers = self.pred[(x, y.seq)] == y.pos && y.pos == self.succ[(x, y.seq)];
-        let y_to_x_frontiers = self.pred[(y, x.seq)] == x.pos && x.pos == self.succ[(y, x.seq)];
+        //        dbg!(&x, &y);
+        let x_to_y_frontiers =
+            self.pred.get((x, y.seq)) == y.pos && y.pos == self.succ.get((x, y.seq));
+        let y_to_x_frontiers =
+            self.pred.get((y, x.seq)) == x.pos && x.pos == self.succ.get((y, x.seq));
         let equal_frontiers = x_to_y_frontiers && y_to_x_frontiers;
 
-        equal_frontiers
+        let ret = equal_frontiers;
+        if ret != self.pred.eq_classes.equiv(x, y) {
+            //            panic!("{:?}, {:?}, {}", x, y, ret);
+        }
+        ret
     }
 
     fn add_site_pair(&mut self, (site_a, site_b): (Site, Site)) {
-        for (origin_seq, target_pos_view) in self.succ.iter_origin_sequences().enumerate() {
-            'next_target_succ: for (target_seq, pos_view) in
-                target_pos_view.axis_iter(Axis(0)).enumerate()
-            {
-                for pos in 1..pos_view.len() {
-                    let origin_site = Site {
-                        seq: origin_seq,
-                        pos,
-                    };
-                    let mut no_further_changes = false;
-                    self.succ_buf[(origin_site, target_seq)] =
-                        if self.shifted_le(origin_site, site_a) {
-                            min(
-                                self.succ[(origin_site, target_seq)],
-                                self.succ[(site_b, target_seq)],
-                            )
-                        } else if self.shifted_le(origin_site, site_b) {
-                            min(
-                                self.succ[(origin_site, target_seq)],
-                                self.succ[(site_a, target_seq)],
-                            )
-                        } else {
-                            no_further_changes = true;
-                            self.succ[(origin_site, target_seq)]
-                        };
-                    if no_further_changes {
-                        // TODO wouldn't a simple break here achieve the same and be simpler?
-                        continue 'next_target_succ;
-                    }
-                }
+        //        eprintln!("{:?}, {:?}", site_a, site_b);
+        self.pred_buf.merge_eq_classes(site_a, site_b);
+        self.succ_buf.merge_eq_classes(site_a, site_b);
+
+        self.succ_buf.next_class.update(site_a, FrontierKind::Succ);
+        self.succ_buf.next_class.update(site_b, FrontierKind::Succ);
+
+        self.pred_buf.next_class.update(site_a, FrontierKind::Pred);
+        self.pred_buf.next_class.update(site_b, FrontierKind::Pred);
+
+        for eq_class_repr in self.succ_buf.iter_eq_classes() {
+            for target_seq in 0..self.succ_buf.seq_cnt {
+                //                let succ_a = self.succ.get((eq_class_repr, target_seq));
+                //                let succ_b = self.succ.get((site_b, target_seq));
+                //                let succ_c = self.succ.get((eq_class_repr, target_seq));
+                //                let succ_d = self.succ.get((site_a, target_seq));
+                //
+                //                let shifted_a = self.shifted_le(eq_class_repr, site_a);
+                //                let shifted_b = self.shifted_le(eq_class_repr, site_b);
+
+                let val = if self.shifted_le(eq_class_repr, site_a) {
+                    min(
+                        //                        succ_a, succ_b
+                        self.succ.get((eq_class_repr, target_seq)),
+                        self.succ.get((site_b, target_seq)),
+                    )
+                } else if self.shifted_le(eq_class_repr, site_b) {
+                    min(
+                        //                        succ_c,
+                        //                        succ_d
+                        self.succ.get((eq_class_repr, target_seq)),
+                        self.succ.get((site_a, target_seq)),
+                    )
+                } else {
+                    //                    succ_a
+                    self.succ.get((eq_class_repr, target_seq))
+                };
+                self.succ_buf.set((eq_class_repr, target_seq), val);
             }
         }
 
-        for (origin_seq, target_pos_view) in self.pred.iter_origin_sequences().enumerate() {
-            'next_target_pred: for (target_seq, pos_view) in
-                target_pos_view.axis_iter(Axis(0)).enumerate()
-            {
-                for pos in (1..pos_view.len()).rev() {
-                    let origin_site = Site {
-                        seq: origin_seq,
-                        pos,
-                    };
-                    let mut no_further_changes = false;
-                    self.pred_buf[(origin_site, target_seq)] =
-                        if self.shifted_ge(origin_site, site_a) {
-                            max(
-                                self.pred[(origin_site, target_seq)],
-                                self.pred[(site_b, target_seq)],
-                            )
-                        } else if self.shifted_ge(origin_site, site_b) {
-                            max(
-                                self.pred[(origin_site, target_seq)],
-                                self.pred[(site_a, target_seq)],
-                            )
-                        } else {
-                            no_further_changes = true;
-                            self.pred[(origin_site, target_seq)]
-                        };
-                    if no_further_changes {
-                        // TODO wouldn't a simple break here achieve the same and be simpler?
-
-                        continue 'next_target_pred;
-                    }
-                }
+        for eq_class_repr in self.pred_buf.iter_eq_classes() {
+            for target_seq in 0..self.pred_buf.seq_cnt {
+                let val = if self.shifted_ge(eq_class_repr, site_a) {
+                    max(
+                        self.pred.get((eq_class_repr, target_seq)),
+                        self.pred.get((site_b, target_seq)),
+                    )
+                } else if self.shifted_ge(eq_class_repr, site_b) {
+                    max(
+                        self.pred.get((eq_class_repr, target_seq)),
+                        self.pred.get((site_a, target_seq)),
+                    )
+                } else {
+                    self.pred.get((eq_class_repr, target_seq))
+                };
+                self.pred_buf.set((eq_class_repr, target_seq), val);
             }
         }
+
+        //        self.pred_buf.merge_eq_classes(site_a, site_b);
+        //        self.succ_buf.merge_eq_classes(site_a, site_b);
+        //
+        //        self.succ_buf.next_class.update(site_a, FrontierKind::Succ);
+        //        self.succ_buf.next_class.update(site_b, FrontierKind::Succ);
+        //
+        //        self.pred_buf.next_class.update(site_a, FrontierKind::Pred);
+        //        self.pred_buf.next_class.update(site_b, FrontierKind::Pred);
 
         self.succ.clone_from(&self.succ_buf);
         self.pred.clone_from(&self.pred_buf);
+
+        assert!(self.shifted_sites_are_aligned(site_a, site_b));
     }
 
     fn lower_bound(&self, origin_site: Site, target_seq: usize) -> usize {
-        let pred = self.pred[(origin_site, target_seq)];
-        let succ = self.succ[(origin_site, target_seq)];
+        let pred = self.pred.get((origin_site, target_seq));
+        let succ = self.succ.get((origin_site, target_seq));
 
         if pred == succ {
             pred
@@ -215,8 +233,8 @@ impl TransitiveClosure {
     }
 
     fn upper_bound(&self, origin_site: Site, target_seq: usize) -> usize {
-        let pred = self.pred[(origin_site, target_seq)];
-        let succ = self.succ[(origin_site, target_seq)];
+        let pred = self.pred.get((origin_site, target_seq));
+        let succ = self.succ.get((origin_site, target_seq));
 
         if pred == succ {
             pred
@@ -232,12 +250,12 @@ impl TransitiveClosure {
     }
 
     fn shifted_less(&self, left: Site, right: Site) -> bool {
-        let a = match self.pred[(right, left.seq)] {
-            Self::MIN_FRONTIER => false,
+        let a = match self.pred.get((right, left.seq)) {
+            val if val == self.pred.default_val => false,
             val => left.pos < val,
         };
-        let b = match self.succ[(left, right.seq)] {
-            Self::MAX_FRONTIER => false,
+        let b = match self.succ.get((left, right.seq)) {
+            val if val == self.succ.default_val => false,
             val => val < right.pos,
         };
 
@@ -245,8 +263,8 @@ impl TransitiveClosure {
     }
 
     fn shifted_le(&self, left: Site, right: Site) -> bool {
-        match self.pred[(right, left.seq)] {
-            Self::MIN_FRONTIER => false,
+        match self.pred.get((right, left.seq)) {
+            //            val if val == self.pred.default_val => false,
             val => left.pos <= val,
         }
     }
@@ -258,20 +276,20 @@ impl TransitiveClosure {
     }
 
     fn shifted_greater(&self, left: Site, right: Site) -> bool {
-        let a = match self.succ[(right, left.seq)] {
-            Self::MAX_FRONTIER => false,
+        let a = match self.succ.get((right, left.seq)) {
+            val if val == self.succ.default_val => false,
             val => left.pos > val,
         };
-        let b = match self.pred[(left, right.seq)] {
-            Self::MIN_FRONTIER => false,
+        let b = match self.pred.get((left, right.seq)) {
+            val if val == self.pred.default_val => false,
             val => val > right.pos,
         };
         a || b
     }
 
     fn shifted_ge(&self, left: Site, right: Site) -> bool {
-        match self.succ[(right, left.seq)] {
-            Self::MAX_FRONTIER => false,
+        match self.succ.get((right, left.seq)) {
+            //            val if val == self.succ.default_val => false,
             val => left.pos >= val,
         }
     }
@@ -292,51 +310,377 @@ pub fn shift_site(a: Site, shift: i64) -> Site {
     }
 }
 
-impl<E> Index<(Site, usize)> for TransitiveFrontier<E>
-where
-    E: Eq + Ord + Clone + Copy,
-{
-    type Output = E;
-    /// Index the Transitive Frontier with a tuple of a site and a target sequence
-    /// the underlying array will be indexed with like this:
-    /// [origin sequence, target sequence, origin position]
-    fn index(&self, index: (Site, usize)) -> &Self::Output {
-        &self.data[[index.1, index.0.seq, index.0.pos]]
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransitiveFrontier {
+    default_val: usize,
+    kind: FrontierKind,
+    seq_cnt: usize,
+    next_class: NextClass,
+    eq_classes: EqClasses,
+    frontiers: FxHashMap<Site, Vec<Cell<usize>>>,
+}
+
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+enum FrontierKind {
+    Pred,
+    Succ,
+}
+
+impl FrontierKind {
+    fn get_default_val(&self) -> usize {
+        match self {
+            FrontierKind::Pred => 0,
+            FrontierKind::Succ => std::usize::MAX,
+        }
     }
 }
 
-impl<E> IndexMut<(Site, usize)> for TransitiveFrontier<E>
-where
-    E: Eq + Ord + Clone + Copy,
-{
-    fn index_mut(&mut self, index: (Site, usize)) -> &mut Self::Output {
-        &mut self.data[[index.1, index.0.seq, index.0.pos]]
+impl TransitiveFrontier {
+    fn new(max_seq_len: usize, seq_cnt: usize, kind: FrontierKind) -> Self {
+        let next_class = NextClass::new(max_seq_len, seq_cnt);
+        let eq_classes = EqClasses::new(max_seq_len, seq_cnt);
+
+        let frontiers = FxHashMap::default();
+        Self {
+            default_val: kind.get_default_val(),
+            kind: kind,
+            seq_cnt,
+            next_class,
+            eq_classes,
+            frontiers,
+        }
+    }
+
+    fn get(&self, index: (Site, usize)) -> usize {
+        if index.0.seq == index.1 {
+            return index.0.pos;
+        }
+
+        let repr = self.eq_classes.find(index.0);
+        match self.frontiers.get(&repr) {
+            Some(frontiers) => frontiers[index.1].get(),
+            None => {
+                let next_class_pos = self.next_class[index.0];
+                let next_class = Site {
+                    seq: index.0.seq,
+                    pos: next_class_pos,
+                };
+
+                if next_class_pos == NextClass::DEFAULT_VAL {
+                    return self.default_val;
+                }
+
+                let repr = self.eq_classes.find(next_class);
+                let frontiers = self.frontiers.get(&repr).unwrap_or_else(|| {
+                    panic!("Index: Next class repr {:?} not in frontiers", repr)
+                });
+                frontiers[index.1].get()
+            }
+        }
+    }
+
+    fn set(&self, index: (Site, usize), val: usize) {
+        //        if index == (Site { seq: 13, pos: 168 }, 9) {
+        //            dbg!(val);
+        //        }
+        let old_val = self.frontiers.get(&index.0).unwrap()[index.1].get();
+        if index.0.seq == index.1 && index.0.pos != val {
+            panic!("{} {} {:?}", old_val, val, index)
+        }
+        self.frontiers
+            .get(&index.0)
+            .expect("set must be called with repr")[index.1]
+            .set(val);
+
+        //        //TODO apparently this double checking for a key is necessary because of current
+        //        // limitations of the borrow checker. In the future it might be possible to remove the
+        //        // contains key call and use a match
+        //        let mut front = if self.frontiers.contains_key(&repr) {
+        //            &mut self.frontiers.get_mut(&repr).unwrap()[index.1]
+        //        } else {
+        //            let next_class_pos = self.next_class[index.0];
+        //            let next_class = Site {
+        //                seq: index.0.seq,
+        //                pos: next_class_pos,
+        //            };
+        //            let repr = self.eq_classes.find(next_class);
+        //            let frontiers = self
+        //                .frontiers
+        //                .get_mut(&repr)
+        //                .unwrap_or_else(|| panic!("IndexMut: Next class repr {:?} not in frontiers", repr));
+        //            &mut frontiers[index.1]
+        //        };
+        //        *front = val;
+    }
+
+    fn merge_eq_classes(&mut self, a: Site, b: Site) {
+        let a_repr = self.eq_classes.find(a);
+        let b_repr = self.eq_classes.find(b);
+
+        if !self.eq_classes.union(a_repr, b_repr) {
+            //            return ();
+            panic!(
+                            "Called TransitiveFrontier::align on sites [{:?}, {:?}], repr: {:?} that were already aligned. \
+                        This is likely a bug.",
+                            a, b, a_repr
+                        )
+        }
+        let unified_repr = self.eq_classes.find(a_repr);
+        let (remove_repr, update_repr) = if a_repr == unified_repr {
+            (b_repr, a_repr)
+        } else if b_repr == unified_repr {
+            (a_repr, b_repr)
+        } else {
+            panic!(
+                "Broke invariant that after union one of the \
+                                former reprs must be the repr of the unified set"
+            )
+        };
+
+        let (default_val, seq_cnt) = (self.default_val, self.seq_cnt);
+
+        let removed_frontier = self.frontiers.remove(&remove_repr);
+        let update_frontier = self.frontiers.get(&update_repr);
+
+        let create_default_front = |site: Site| {
+            let mut front = vec![Cell::new(default_val); seq_cnt];
+            front[site.seq].set(site.pos);
+            front
+        };
+
+        let do_front_update = |update_front: &Vec<_>, removed_front: Vec<_>| {
+            let _removed_front = removed_front.clone();
+            update_front.iter().enumerate().zip(removed_front).for_each(
+                |((idx, l), r): ((_, &Cell<usize>), Cell<usize>)| {
+                    let r = r.into_inner();
+
+                    if self.kind == FrontierKind::Pred {
+                        l.set(max(l.get(), r))
+                    } else {
+                        l.set(min(l.get(), r))
+                    }
+                },
+            )
+        };
+
+        match (update_frontier, removed_frontier) {
+            (Some(update_front), Some(removed_front)) => {
+                do_front_update(update_front, removed_front);
+            }
+            (Some(update_front), None) => update_front[remove_repr.seq].set(remove_repr.pos),
+            (None, Some(removed_front)) => {
+                let mut front = create_default_front(update_repr);
+                do_front_update(&front, removed_front);
+                self.frontiers.insert(unified_repr, front);
+            }
+            (None, None) => {
+                let mut front = create_default_front(update_repr);
+                front[remove_repr.seq].set(remove_repr.pos);
+                self.frontiers.insert(unified_repr, front);
+            }
+        }
+    }
+
+    pub fn iter_eq_classes(&self) -> impl Iterator<Item = Site> + '_ {
+        self.frontiers.keys().copied()
     }
 }
 
-impl Index<(Site, usize)> for SiteAlignment {
-    type Output = bool;
-    /// Index the Transitive Frontier with a tuple of a site and a target sequence
-    /// the underlying array will be indexed with like this:
-    /// [origin sequence, target sequence, origin position]
-    fn index(&self, index: (Site, usize)) -> &Self::Output {
-        &self.data[[index.1, index.0.seq, index.0.pos]]
+#[derive(Clone, Debug, PartialEq)]
+struct NextClass {
+    data: Array2<usize>,
+}
+
+impl NextClass {
+    const DEFAULT_VAL: usize = 0;
+    fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
+        //TODO this probably need to be initialized with something else than 0
+        // also the shape might be off
+        let data = Array2::zeros((seq_cnt, max_seq_len));
+        Self { data }
+    }
+
+    fn update(&mut self, aligned_site: Site, frontier_kind: FrontierKind) {
+        let orig_next_class = self.data[[aligned_site.seq, aligned_site.pos]];
+        let mut slice = match frontier_kind {
+            FrontierKind::Succ => self
+                .data
+                .slice_mut(s![aligned_site.seq, ..aligned_site.pos+1;-1]),
+            FrontierKind::Pred => self
+                .data
+                .slice_mut(s![aligned_site.seq, aligned_site.pos..]),
+        };
+        slice
+            .iter_mut()
+            .take_while(|next_class| **next_class == orig_next_class)
+            .for_each(|next_class| *next_class = aligned_site.pos);
     }
 }
 
-impl IndexMut<(Site, usize)> for SiteAlignment {
-    fn index_mut(&mut self, index: (Site, usize)) -> &mut Self::Output {
-        &mut self.data[[index.1, index.0.seq, index.0.pos]]
+impl Index<Site> for NextClass {
+    type Output = usize;
+
+    fn index(&self, index: Site) -> &Self::Output {
+        &self.data[[index.seq, index.pos]]
     }
 }
+
+impl IndexMut<Site> for NextClass {
+    fn index_mut(&mut self, index: Site) -> &mut Self::Output {
+        &mut self.data[[index.seq, index.pos]]
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EqClasses {
+    seq_cnt: usize,
+    max_seq_len: usize,
+    data: UnionFind<usize>,
+}
+
+impl EqClasses {
+    fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
+        // TODO is this the correct number of elements
+        let data = UnionFind::new(seq_cnt * max_seq_len);
+        Self {
+            seq_cnt,
+            max_seq_len,
+            data,
+        }
+    }
+    fn find(&self, site: Site) -> Site {
+        self.idx_to_site(self.data.find(self.site_to_idx(site)))
+    }
+    fn union(&mut self, a: Site, b: Site) -> bool {
+        self.data.union(self.site_to_idx(a), self.site_to_idx(b))
+    }
+
+    fn equiv(&self, a: Site, b: Site) -> bool {
+        self.data.equiv(self.site_to_idx(a), self.site_to_idx(b))
+    }
+
+    fn site_to_idx(&self, site: Site) -> usize {
+        site.seq * self.max_seq_len + site.pos
+    }
+
+    fn idx_to_site(&self, idx: usize) -> Site {
+        let (seq, pos) = idx.div_rem(&self.max_seq_len);
+        Site { seq, pos }
+    }
+}
+
+impl PartialEq for EqClasses {
+    fn eq(&self, other: &Self) -> bool {
+        self.seq_cnt == other.seq_cnt
+            && self.max_seq_len == other.max_seq_len
+            && self.data.clone().into_labeling() == other.data.clone().into_labeling()
+    }
+}
+
+//impl Index<(Site, usize)> for TransitiveFrontier {
+//    type Output = usize;
+//
+//    fn index(&self, index: (Site, usize)) -> &Self::Output {
+//        if index.0.seq == index.1 {
+//            return &index.0.pos;
+//        }
+//
+//        let repr = self.eq_classes.find(index.0);
+//        match self.frontiers.get(&repr) {
+//            Some(frontiers) => &frontiers[index.1],
+//            None => {
+//                let next_class_pos = self.next_class[index.0];
+//                let next_class = Site {
+//                    seq: index.0.seq,
+//                    pos: next_class_pos,
+//                };
+//
+//                if next_class_pos == NextClass::DEFAULT_VAL {
+//                    return &self.default_val;
+//                }
+//
+//                let repr = self.eq_classes.find(next_class);
+//                let frontiers = self.frontiers.get(&repr).unwrap_or_else(|| {
+//                    panic!("Index: Next class repr {:?} not in frontiers", repr)
+//                });
+//                &frontiers[index.1]
+//            }
+//        }
+//    }
+//}
+
+//impl IndexMut<(Site, usize)> for TransitiveFrontier {
+//    fn index_mut(&mut self, index: (Site, usize)) -> &mut Self::Output {
+//        let repr = self.eq_classes.find(index.0);
+//
+//        //TODO apparently this double checking for a key is necessary because of current
+//        // limitations of the borrow checker. In the future it might be possible to remove the
+//        // contains key call and use a match
+//        if self.frontiers.contains_key(&repr) {
+//            &mut self.frontiers.get_mut(&repr).unwrap()[index.1]
+//        } else {
+//            let next_class_pos = self.next_class[index.0];
+//            let next_class = Site {
+//                seq: index.0.seq,
+//                pos: next_class_pos,
+//            };
+//            let repr = self.eq_classes.find(next_class);
+//            let frontiers = self
+//                .frontiers
+//                .get_mut(&repr)
+//                .unwrap_or_else(|| panic!("IndexMut: Next class repr {:?} not in frontiers", repr));
+//            &mut frontiers[index.1]
+//        }
+//    }
+//}
+
+//impl<E> Index<(Site, usize)> for TransitiveFrontier<E>
+//where
+//    E: Eq + Ord + Clone + Copy,
+//{
+//    type Output = E;
+//    /// Index the Transitive Frontier with a tuple of a site and a target sequence
+//    /// the underlying array will be indexed with like this:
+//    /// [origin sequence, target sequence, origin position]
+//    fn index(&self, index: (Site, usize)) -> &Self::Output {
+//        &self.data[[index.1, index.0.seq, index.0.pos]]
+//    }
+//}
+//
+//impl<E> IndexMut<(Site, usize)> for TransitiveFrontier<E>
+//where
+//    E: Eq + Ord + Clone + Copy,
+//{
+//    fn index_mut(&mut self, index: (Site, usize)) -> &mut Self::Output {
+//        &mut self.data[[index.1, index.0.seq, index.0.pos]]
+//    }
+//}
+
+//impl Index<(Site, usize)> for SiteAlignment {
+//    type Output = bool;
+//    /// Index the Transitive Frontier with a tuple of a site and a target sequence
+//    /// the underlying array will be indexed with like this:
+//    /// [origin sequence, target sequence, origin position]
+//    fn index(&self, index: (Site, usize)) -> &Self::Output {
+//        &self.data[[index.1, index.0.seq, index.0.pos]]
+//    }
+//}
+//
+//impl IndexMut<(Site, usize)> for SiteAlignment {
+//    fn index_mut(&mut self, index: (Site, usize)) -> &mut Self::Output {
+//        &mut self.data[[index.1, index.0.seq, index.0.pos]]
+//    }
+//}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::ops::Not;
+
     use itertools::Itertools;
     use ndarray::{arr2, arr3};
     use smallvec::SmallVec;
-    use std::ops::Not;
+
+    use super::*;
 
     macro_rules! s {
         ($seq:expr, $pos:expr) => {
@@ -347,28 +691,28 @@ mod tests {
         };
     }
 
-    #[test]
-    fn test_new_trans_frontier() {
-        let actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
-        let expected = arr3(&[
-            [[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]],
-            [[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]],
-            [[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]],
-        ]);
-        assert_eq!(actual.data, expected);
-    }
-
-    #[test]
-    fn iter_origin_sequences() {
-        let mut actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
-        let expected = vec![
-            arr2(&[[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]]),
-            arr2(&[[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]]),
-            arr2(&[[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]]),
-        ];
-
-        assert_eq!(actual.iter_origin_sequences().collect_vec(), expected);
-    }
+    //    #[test]
+    //    fn test_new_trans_frontier() {
+    //        let actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
+    //        let expected = arr3(&[
+    //            [[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]],
+    //            [[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]],
+    //            [[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]],
+    //        ]);
+    //        assert_eq!(actual.data, expected);
+    //    }
+    //
+    //    #[test]
+    //    fn iter_origin_sequences() {
+    //        let mut actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
+    //        let expected = vec![
+    //            arr2(&[[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]]),
+    //            arr2(&[[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]]),
+    //            arr2(&[[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]]),
+    //        ];
+    //
+    //        assert_eq!(actual.iter_origin_sequences().collect_vec(), expected);
+    //    }
 
     #[test]
     fn shift_diagonal_test() {
@@ -528,5 +872,23 @@ mod tests {
 
         assert!(closure.shifted_ge(s!(1, 2), s!(0, 1)));
         assert!(closure.shifted_le(s!(1, 2), s!(0, 1)).not());
+    }
+
+    #[test]
+    fn test_next_class_succ() {
+        let mut next_class = NextClass::new(10, 1);
+        next_class.update(s!(0, 3), FrontierKind::Succ);
+        next_class.update(s!(0, 8), FrontierKind::Succ);
+
+        assert_eq!(arr2(&[[3, 3, 3, 3, 8, 8, 8, 8, 8, 0]]), next_class.data);
+    }
+
+    #[test]
+    fn test_next_class_pred() {
+        let mut next_class = NextClass::new(10, 1);
+        next_class.update(s!(0, 3), FrontierKind::Pred);
+        next_class.update(s!(0, 8), FrontierKind::Pred);
+
+        assert_eq!(arr2(&[[0, 0, 0, 3, 3, 3, 3, 3, 8, 8]]), next_class.data);
     }
 }
