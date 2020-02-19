@@ -4,10 +4,13 @@ use num_integer::binomial;
 use serde::{Deserialize, Serialize};
 use spam_align::align::align;
 use spam_align::align::eq_class::EqClasses;
-use spam_align::data_loaders::{balibase, write_as_fasta, Alignment, PositionAlignment};
+use spam_align::data_loaders::{
+    balibase, format_as_fasta, write_as_fasta, Alignment, PositionAlignment, Sequence,
+};
 use spam_align::spaced_word::{read_patterns_from_file, Pattern};
 use spam_align::Sequences;
 use std::error::Error;
+use std::fs::File;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -29,21 +32,16 @@ struct AlignmentResult {
     true_site_pair_count: usize,
     precision: f64,
     recall: f64,
+    aligned_sequences_fasta: String,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let opt: Opt = Opt::from_args();
     let alignment = balibase::parse_xml_file(opt.in_file)?;
     let patterns = read_patterns_from_file(opt.pattern_set_path)?;
-    //    let sequences = Sequences::new(&alignment);
-    //    let (scored_diagonals, closure) = align(&sequences, &patterns);
-    //    eprintln!("Added {} diagonals", scored_diagonals.len());
-    //    let mut orig_sequences = alignment.unaligned_data;
-    //    let eq_classes = EqClasses::new(&scored_diagonals, &closure);
-    //    eq_classes.align_sequences(&mut orig_sequences);
-    //    write_as_fasta(opt.out_file, &orig_sequences)?;
     let results = compute_results_for_alignment(&alignment, &patterns);
-    dbg!(results);
+    let out_file = File::create(opt.out_file)?;
+    serde_json::to_writer_pretty(out_file, &results)?;
     Ok(())
 }
 
@@ -56,7 +54,7 @@ fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) ->
     let (scored_diagonals, closure) = align(&sequences, &patterns);
     let eq_classes = EqClasses::new(&scored_diagonals, &closure);
 
-    for eq_class in eq_classes {
+    for eq_class in eq_classes.iter() {
         for (&s1, &s2) in eq_class.iter().tuple_combinations() {
             let consistent = alignment.pos_aligned(s1, s2);
             match consistent {
@@ -73,6 +71,10 @@ fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) ->
         }
     }
 
+    let mut orig_sequences = alignment.unaligned_data.clone();
+    eq_classes.align_sequences(&mut orig_sequences);
+    let formatted = format_as_fasta(&orig_sequences);
+
     let true_site_pair_count = true_site_pair_count(alignment);
     let tp = correct_site_pairs.len();
     let fp = incorrect_site_pairs.len();
@@ -83,6 +85,7 @@ fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) ->
         true_site_pair_count,
         precision: tp as f64 / (tp + fp) as f64,
         recall: tp as f64 / true_site_pair_count as f64,
+        aligned_sequences_fasta: formatted,
     }
 }
 

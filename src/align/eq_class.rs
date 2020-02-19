@@ -135,6 +135,10 @@ impl EqClasses {
                 .collect();
         }
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &FxHashSet<Site>> {
+        self.classes.iter()
+    }
 }
 
 fn get_el_from_hashset<E>(hashset: &FxHashSet<E>) -> &E {
