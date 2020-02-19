@@ -19,6 +19,7 @@ num-integer = "0.1.41"
 quick-xml = {version = "0.17.2", features = ["serialize"]}
 serde_json = "1.0.44"
 indicatif = {version = "0.13.0", features = ["with_rayon"]}
+anyhow = "1.0.26"
 
 [profile.release]
 debug = true

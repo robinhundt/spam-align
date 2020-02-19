@@ -21,7 +21,7 @@ pub fn align(
     let mut diagonals = diagonals.collect_vec();
     diagonals.sort_by_cached_key(|diag| -diag.score);
 
-    println!("Found {} diagonals", diagonals.len());
+    // println!("Found {} diagonals", diagonals.len());
     let max_seq_len = sequences
         .iter()
         .max_by_key(|seq| seq.len())
@@ -34,7 +34,7 @@ pub fn align(
     progress_bar.set_draw_delta(num_diagonals as u64 / 100);
     let added_diagonals = diagonals
         .into_iter()
-        .progress_with(progress_bar)
+        // .progress_with(progress_bar)
         .filter_map(|mut scored_diag| {
             if transitive_closure.add_diagonal(&mut scored_diag.micro_alignment) {
                 Some(scored_diag)

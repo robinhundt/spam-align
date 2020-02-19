@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate anyhow;
+
 use crate::align::micro_alignment::Site;
 use crate::data_loaders::Alignment;
 use itertools::{EitherOrBoth, Itertools};

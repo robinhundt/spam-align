@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use std::error::Error;
 use std::str::FromStr;
 
+use anyhow::{Error, Result};
 use fxhash::{hash, FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rand::prelude::*;
@@ -13,8 +13,6 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::Not;
 use std::path::Path;
-
-type BoxError = Box<dyn Error>;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
 pub enum Position {
@@ -33,13 +31,15 @@ impl Position {
 }
 
 impl TryFrom<&u8> for Position {
-    type Error = Box<dyn Error>;
+    type Error = Error;
 
     fn try_from(value: &u8) -> Result<Self, Self::Error> {
         let converted = match value {
             0 => Position::DontCare,
             1 => Position::Match,
-            _ => Err("Invalid token in provided pattern, only 0 and 1 allowed")?,
+            _ => Err(anyhow!(
+                "Invalid token in provided pattern, only 0 and 1 allowed"
+            ))?,
         };
         Ok(converted)
     }
@@ -57,7 +57,7 @@ pub type Word = Vec<u8>;
 impl Pattern {
     const MAX_WEIGHT: usize = 12;
 
-    pub fn new(binary_pattern: &[u8]) -> Result<Self, BoxError> {
+    pub fn new(binary_pattern: &[u8]) -> Result<Self> {
         let positions = binary_pattern
             .iter()
             .map(Position::try_from)
@@ -67,7 +67,7 @@ impl Pattern {
             .filter(|&&pos| pos == Position::Match)
             .count();
         if weight > Self::MAX_WEIGHT {
-            Err(format!(
+            Err(anyhow!(
                 "Pattern max weight is {}, but pattern \"{:#?}\" has weight: {}",
                 Self::MAX_WEIGHT,
                 binary_pattern,
@@ -90,9 +90,9 @@ impl Pattern {
     }
 
     /// returns the spaced word and the word of the don't care positions
-    pub fn _match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word), BoxError> {
+    pub fn _match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word)> {
         if seq_slice.len() < self.len() {
-            Err("Slice must be longer than pattern")?;
+            Err(anyhow!("Slice must be longer than pattern"))?;
         }
 
         Ok(self.positions().iter().zip(seq_slice.iter()).fold(
@@ -138,7 +138,7 @@ impl Pattern {
 }
 
 impl FromStr for Pattern {
-    type Err = Box<dyn Error>;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Pattern::new(
@@ -149,7 +149,7 @@ impl FromStr for Pattern {
     }
 }
 
-pub fn read_patterns_from_file(path: impl AsRef<Path>) -> Result<Vec<Pattern>, Box<dyn Error>> {
+pub fn read_patterns_from_file(path: impl AsRef<Path>) -> Result<Vec<Pattern>> {
     let mut file = File::open(path)?;
     let mut buf = String::new();
     file.read_to_string(&mut buf)?;

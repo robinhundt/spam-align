@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::path::Path;
 
+use anyhow::Result;
 use quick_xml::de::from_reader;
 use serde::Deserialize;
 
@@ -91,13 +92,13 @@ pub fn parse_xml_file(path: impl AsRef<Path>) -> Result<Alignment, Box<dyn Error
 pub fn parse_xml_files_in_dir(
     path: impl AsRef<Path>,
     file_filter: FilterXmlFile,
-) -> Result<Vec<Alignment>, Box<dyn Error>> {
+) -> Result<Vec<Alignment>> {
     let bb_alignments = BBAlignment::from_xml_files_in_dir(path, file_filter)?;
     Ok(bb_alignments.into_iter().map(|a| a.into()).collect())
 }
 
 impl BBAlignment {
-    pub fn from_xml_file(path: impl AsRef<Path>) -> Result<BBAlignment, Box<dyn Error>> {
+    pub fn from_xml_file(path: impl AsRef<Path>) -> Result<BBAlignment> {
         let file = BufReader::new(File::open(&path)?);
         let xml_root: XMLRoot = from_reader(file)?;
         Ok(xml_root.alignment)
@@ -106,7 +107,7 @@ impl BBAlignment {
     pub fn from_xml_files_in_dir(
         path: impl AsRef<Path>,
         file_filter: FilterXmlFile,
-    ) -> Result<Vec<BBAlignment>, Box<dyn Error>> {
+    ) -> Result<Vec<BBAlignment>> {
         fs::read_dir(path)?
             .filter(|dir_entry| match dir_entry {
                 Ok(entry) => entry.path().extension() == Some(OsStr::new("xml")),
