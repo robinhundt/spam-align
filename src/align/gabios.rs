@@ -8,10 +8,14 @@ use itertools::Itertools;
 use ndarray::{s, Array2, Array3, ArrayView2, Axis};
 use num_integer::Integer;
 use petgraph::graph::IndexType;
-use petgraph::unionfind::UnionFind;
+
+use union_find::UnionFind;
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use std::cell::Cell;
+use std::time::Instant;
+
+mod union_find;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransitiveClosure {
@@ -83,11 +87,7 @@ impl TransitiveClosure {
             self.pred.get((y, x.seq)) == x.pos && x.pos == self.succ.get((y, x.seq));
         let equal_frontiers = x_to_y_frontiers && y_to_x_frontiers;
 
-        let ret = equal_frontiers;
-        if ret != self.pred.eq_classes.equiv(x, y) {
-            //            panic!("{:?}, {:?}, {}", x, y, ret);
-        }
-        ret
+        equal_frontiers
     }
 
     fn add_site_pair(&mut self, (site_a, site_b): (Site, Site)) {
@@ -102,42 +102,42 @@ impl TransitiveClosure {
         self.pred_buf.next_class.update(site_b, FrontierKind::Pred);
 
         for eq_class_repr in self.succ_buf.iter_eq_classes() {
+            let le_a = self.shifted_le(eq_class_repr, site_a);
+            let le_b = self.shifted_le(eq_class_repr, site_b);
             for target_seq in 0..self.succ_buf.seq_cnt {
-                let val = if self.shifted_le(eq_class_repr, site_a) {
+                let val = if le_a {
                     min(
-                        //                        succ_a, succ_b
                         self.succ.get((eq_class_repr, target_seq)),
                         self.succ.get((site_b, target_seq)),
                     )
-                } else if self.shifted_le(eq_class_repr, site_b) {
+                } else if le_b {
                     min(
-                        //                        succ_c,
-                        //                        succ_d
                         self.succ.get((eq_class_repr, target_seq)),
                         self.succ.get((site_a, target_seq)),
                     )
                 } else {
-                    //                    succ_a
-                    self.succ.get((eq_class_repr, target_seq))
+                    continue;
                 };
                 self.succ_buf.set((eq_class_repr, target_seq), val);
             }
         }
 
         for eq_class_repr in self.pred_buf.iter_eq_classes() {
+            let ge_a = self.shifted_ge(eq_class_repr, site_a);
+            let ge_b = self.shifted_ge(eq_class_repr, site_b);
             for target_seq in 0..self.pred_buf.seq_cnt {
-                let val = if self.shifted_ge(eq_class_repr, site_a) {
+                let val = if ge_a {
                     max(
                         self.pred.get((eq_class_repr, target_seq)),
                         self.pred.get((site_b, target_seq)),
                     )
-                } else if self.shifted_ge(eq_class_repr, site_b) {
+                } else if ge_b {
                     max(
                         self.pred.get((eq_class_repr, target_seq)),
                         self.pred.get((site_a, target_seq)),
                     )
                 } else {
-                    self.pred.get((eq_class_repr, target_seq))
+                    continue;
                 };
                 self.pred_buf.set((eq_class_repr, target_seq), val);
             }
@@ -245,7 +245,7 @@ pub struct TransitiveFrontier {
     seq_cnt: usize,
     next_class: NextClass,
     eq_classes: EqClasses,
-    frontiers: FxHashMap<Site, Vec<Cell<usize>>>,
+    frontiers: Vec<Option<Vec<Cell<usize>>>>,
 }
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
@@ -268,7 +268,7 @@ impl TransitiveFrontier {
         let next_class = NextClass::new(max_seq_len, seq_cnt);
         let eq_classes = EqClasses::new(max_seq_len, seq_cnt);
 
-        let frontiers = FxHashMap::default();
+        let frontiers = vec![None; max_seq_len * seq_cnt];
         Self {
             default_val: kind.get_default_val(),
             kind: kind,
@@ -285,7 +285,7 @@ impl TransitiveFrontier {
         }
 
         let repr = self.eq_classes.find(index.0);
-        match self.frontiers.get(&repr) {
+        match &self.frontiers[self.eq_classes.site_to_idx(repr)] {
             Some(frontiers) => frontiers[index.1].get(),
             None => {
                 let next_class_pos = self.next_class[index.0];
@@ -299,9 +299,11 @@ impl TransitiveFrontier {
                 }
 
                 let repr = self.eq_classes.find(next_class);
-                let frontiers = self.frontiers.get(&repr).unwrap_or_else(|| {
-                    panic!("Index: Next class repr {:?} not in frontiers", repr)
-                });
+                let frontiers = self.frontiers[self.eq_classes.site_to_idx(repr)]
+                    .as_ref()
+                    .unwrap_or_else(|| {
+                        panic!("Index: Next class repr {:?} not in frontiers", repr)
+                    });
                 frontiers[index.1].get()
             }
         }
@@ -312,8 +314,8 @@ impl TransitiveFrontier {
         //        if index.0.seq == index.1 && index.0.pos != val {
         //            panic!("{} {} {:?}", old_val, val, index)
         //        }
-        self.frontiers
-            .get(&index.0)
+        self.frontiers[self.eq_classes.site_to_idx(index.0)]
+            .as_ref()
             .expect("set must be called with repr")[index.1]
             .set(val);
     }
@@ -344,8 +346,8 @@ impl TransitiveFrontier {
 
         let (default_val, seq_cnt) = (self.default_val, self.seq_cnt);
 
-        let removed_frontier = self.frontiers.remove(&remove_repr);
-        let update_frontier = self.frontiers.get(&update_repr);
+        let removed_frontier = &self.frontiers[self.eq_classes.site_to_idx(remove_repr)].take();
+        let update_frontier = &self.frontiers[self.eq_classes.site_to_idx(update_repr)];
 
         let create_default_front = |site: Site| {
             let mut front = vec![Cell::new(default_val); seq_cnt];
@@ -353,11 +355,10 @@ impl TransitiveFrontier {
             front
         };
 
-        let do_front_update = |update_front: &Vec<_>, removed_front: Vec<_>| {
-            let _removed_front = removed_front.clone();
+        let do_front_update = |update_front: &Vec<_>, removed_front: &Vec<_>| {
             update_front.iter().enumerate().zip(removed_front).for_each(
-                |((idx, l), r): ((_, &Cell<usize>), Cell<usize>)| {
-                    let r = r.into_inner();
+                |((idx, l), r): ((_, &Cell<usize>), &Cell<usize>)| {
+                    let r = r.get();
 
                     if self.kind == FrontierKind::Pred {
                         l.set(max(l.get(), r))
@@ -376,18 +377,22 @@ impl TransitiveFrontier {
             (None, Some(removed_front)) => {
                 let mut front = create_default_front(update_repr);
                 do_front_update(&front, removed_front);
-                self.frontiers.insert(unified_repr, front);
+                self.frontiers[self.eq_classes.site_to_idx(unified_repr)] = Some(front);
             }
             (None, None) => {
                 let mut front = create_default_front(update_repr);
                 front[remove_repr.seq].set(remove_repr.pos);
-                self.frontiers.insert(unified_repr, front);
+                self.frontiers[self.eq_classes.site_to_idx(unified_repr)] = Some(front);
             }
         }
     }
 
     pub fn iter_eq_classes(&self) -> impl Iterator<Item = Site> + '_ {
-        self.frontiers.keys().copied()
+        self.frontiers
+            .iter()
+            .enumerate()
+            .filter(|(_idx, front)| front.is_some())
+            .map(move |(idx, _)| self.eq_classes.idx_to_site(idx))
     }
 }
 
@@ -436,17 +441,17 @@ impl IndexMut<Site> for NextClass {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct EqClasses {
     seq_cnt: usize,
     max_seq_len: usize,
-    data: UnionFind<usize>,
+    data: UnionFind,
 }
 
 impl EqClasses {
     fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
         // TODO is this the correct number of elements
-        let data = UnionFind::new(seq_cnt * max_seq_len);
+        let data = UnionFind::new(seq_cnt, max_seq_len);
         Self {
             seq_cnt,
             max_seq_len,
@@ -454,33 +459,28 @@ impl EqClasses {
         }
     }
     fn find(&self, site: Site) -> Site {
-        self.idx_to_site(self.data.find(self.site_to_idx(site)))
+        self.data.find(site)
     }
     fn union(&mut self, a: Site, b: Site) -> bool {
-        self.data.union(self.site_to_idx(a), self.site_to_idx(b))
-    }
-
-    fn equiv(&self, a: Site, b: Site) -> bool {
-        self.data.equiv(self.site_to_idx(a), self.site_to_idx(b))
+        self.data.union(a, b)
     }
 
     fn site_to_idx(&self, site: Site) -> usize {
         site.seq * self.max_seq_len + site.pos
     }
-
     fn idx_to_site(&self, idx: usize) -> Site {
         let (seq, pos) = idx.div_rem(&self.max_seq_len);
         Site { seq, pos }
     }
 }
 
-impl PartialEq for EqClasses {
-    fn eq(&self, other: &Self) -> bool {
-        self.seq_cnt == other.seq_cnt
-            && self.max_seq_len == other.max_seq_len
-            && self.data.clone().into_labeling() == other.data.clone().into_labeling()
-    }
-}
+// impl PartialEq for EqClasses {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.seq_cnt == other.seq_cnt
+//             && self.max_seq_len == other.max_seq_len
+//             && self.data.clone().into_labeling() == other.data.clone().into_labeling()
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

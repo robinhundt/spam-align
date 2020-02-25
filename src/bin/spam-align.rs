@@ -49,13 +49,13 @@ struct AlignmentResult {
 }
 
 fn main() -> Result<()> {
-    // let opt: Opt = Opt::from_args();
-    // let alignment = balibase::parse_xml_file(opt.in_file)?;
-    // let patterns = read_patterns_from_file(opt.pattern_set_path)?;
-    // let results = compute_results_for_alignment(&alignment, &patterns);
-    // let out_file = File::create(opt.out_file)?;
-    // serde_json::to_writer_pretty(out_file, &results)?;
-    compute_results_for_balibase()?;
+    let opt: Opt = Opt::from_args();
+    let alignment = balibase::parse_xml_file(opt.in_file)?;
+    let patterns = read_patterns_from_file(opt.pattern_set_path)?;
+    let results = compute_results_for_alignment(&alignment, &patterns);
+    let out_file = File::create(opt.out_file)?;
+    serde_json::to_writer_pretty(out_file, &results)?;
+    // compute_results_for_balibase()?;
     Ok(())
 }
 

@@ -84,7 +84,7 @@ impl From<BBSequence> for Sequence {
     }
 }
 
-pub fn parse_xml_file(path: impl AsRef<Path>) -> Result<Alignment, Box<dyn Error>> {
+pub fn parse_xml_file(path: impl AsRef<Path>) -> Result<Alignment> {
     let bb_alignment = BBAlignment::from_xml_file(path)?;
     Ok(bb_alignment.into())
 }
