@@ -1,5 +1,5 @@
 use anyhow::Result;
-use fxhash::FxHashSet;
+use fxhash::{FxBuildHasher, FxHashSet};
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use num_integer::binomial;
@@ -7,12 +7,14 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use spam_align::align::align;
 use spam_align::align::eq_class::EqClasses;
+use spam_align::align::micro_alignment::Site;
 use spam_align::data_loaders::balibase::FilterXmlFile;
 use spam_align::data_loaders::{
     balibase, format_as_fasta, write_as_fasta, Alignment, PositionAlignment, Sequence,
 };
 use spam_align::spaced_word::{read_patterns_from_file, Pattern};
 use spam_align::Sequences;
+use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
@@ -69,7 +71,7 @@ fn compute_results_for_balibase() -> Result<()> {
     });
     for folder in balibase_folders {
         let out_folder_path = format!(
-            "./bb-aligned-out/{}",
+            "./bb-fast-aligned-out/{}",
             folder.file_name().unwrap().to_str().unwrap()
         );
         fs::create_dir_all(&out_folder_path)?;
@@ -106,14 +108,16 @@ fn compute_results_for_folder(
 
 fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) -> AlignmentResult {
     let sequences = Sequences::new(&alignment);
-    let mut correct_site_pairs = FxHashSet::default();
+    let mut correct_site_pairs: HashSet<(Site, Site), FxBuildHasher> = FxHashSet::default();
     correct_site_pairs.reserve(sequences.total_len() * 10);
-    let mut incorrect_site_pairs = FxHashSet::default();
+    let mut incorrect_site_pairs: HashSet<(Site, Site), FxBuildHasher> = FxHashSet::default();
     incorrect_site_pairs.reserve(sequences.total_len() * 10);
     let now = Instant::now();
     let (scored_diagonals, closure) = align(&sequences, &patterns);
-    let alignment_execution_time = now.elapsed();
     let eq_classes = EqClasses::new(&scored_diagonals, &closure);
+    let mut orig_sequences = alignment.unaligned_data.clone();
+    eq_classes.align_sequences(&mut orig_sequences);
+    let alignment_execution_time = now.elapsed();
 
     for eq_class in eq_classes.iter() {
         for (&s1, &s2) in eq_class.iter().tuple_combinations() {
@@ -132,8 +136,6 @@ fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) ->
         }
     }
 
-    let mut orig_sequences = alignment.unaligned_data.clone();
-    eq_classes.align_sequences(&mut orig_sequences);
     let aligned_sequences_fasta = format_as_fasta(&orig_sequences);
 
     let true_site_pair_count = true_site_pair_count(alignment);
