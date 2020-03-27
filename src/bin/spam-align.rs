@@ -26,27 +26,29 @@ use structopt::StructOpt;
 #[derive(StructOpt, Debug)]
 enum Opt {
     Single {
-        #[structopt(name = "FILE", parse(from_os_str))]
+        #[structopt(long, name = "FILE", parse(from_os_str))]
         in_file: PathBuf,
-        #[structopt(name = "PATTERN_SET", parse(from_os_str))]
+        #[structopt(long, name = "PATTERN_SET", parse(from_os_str))]
         pattern_set_path: PathBuf,
-        #[structopt(name = "OUT", parse(from_os_str))]
+        #[structopt(long, name = "OUT", parse(from_os_str))]
         out_file: PathBuf,
     },
     Balibase {
         #[structopt(
+            long,
             name = "BALIBASE PATH",
             parse(from_os_str),
             default_value = "data/bb3_release"
         )]
         balibase_path: PathBuf,
         #[structopt(
-            name = "PATTERNS",
+            long,
+            name = "PATTERNS PATH",
             parse(from_os_str),
             default_value = "pattern_sets/data"
         )]
         patterns_path: PathBuf,
-        #[structopt(name = "OUT", parse(from_os_str))]
+        #[structopt(short, long, name = "OUT", parse(from_os_str))]
         out_path: PathBuf,
     },
 }
@@ -84,7 +86,7 @@ fn main() -> Result<()> {
             serde_json::to_writer_pretty(out_file, &results)?;
         }
         Opt::Balibase {
-            balibase_path: balibase_path,
+            balibase_path,
             patterns_path,
             out_path,
         } => {
