@@ -1,704 +1,524 @@
-use std::cmp::{max, min};
-use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
-use std::ops::{Index, IndexMut};
-
-use fxhash::FxHashMap;
-use itertools::Itertools;
-use ndarray::{s, Array2, Array3, ArrayView2, Axis};
-use num_integer::Integer;
-use petgraph::graph::IndexType;
-
-use union_find::UnionFind;
-
 use crate::align::micro_alignment::{MicroAlignment, Site};
-use std::cell::Cell;
+use crate::align::Matrix;
+use itertools::{max, Itertools};
+use std::cmp::min;
+use std::mem;
+use std::mem::swap;
+use std::ops::Not;
 use std::time::Instant;
 
-mod union_find;
+pub struct Closure {
+    sequences: Vec<Sequence>,
+    max_length: usize,
+    alig_set: Vec<PositionSet>,
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct TransitiveClosure {
-    pub succ: TransitiveFrontier,
-    pub pred: TransitiveFrontier,
+    nbr_alig_sets: usize,
+    old_nbr_alig_sets: usize,
 
-    succ_buf: TransitiveFrontier,
-    pred_buf: TransitiveFrontier,
+    pred_frontier: Matrix<usize>,
+    succ_frontier: Matrix<usize>,
+
+    left1: Vec<usize>,
+    left2: Vec<usize>,
+    right1: Vec<usize>,
+    right2: Vec<usize>,
+
+    pos: Matrix<usize>,
 }
 
-impl TransitiveClosure {
-    pub fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        let pred = TransitiveFrontier::new(max_seq_len + 2, seq_cnt, FrontierKind::Pred);
-        let succ = TransitiveFrontier::new(max_seq_len + 2, seq_cnt, FrontierKind::Succ);
+struct Sequence {
+    length: usize,
+    alig_set_nbr: Vec<usize>,
+    pred_alig_set_pos: Vec<usize>,
+    succ_alig_set_pos: Vec<usize>,
+}
 
-        let pred_buf = pred.clone();
-        let succ_buf = succ.clone();
+impl Sequence {
+    fn len(&self) -> usize {
+        self.length
+    }
+}
 
+#[derive(Clone)]
+struct PositionSet {
+    pos: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+struct ShiftedSite(Site);
+
+impl From<Site> for ShiftedSite {
+    fn from(mut site: Site) -> Self {
+        site.pos += 1;
+        ShiftedSite(site)
+    }
+}
+
+impl From<ShiftedSite> for Site {
+    fn from(mut site: ShiftedSite) -> Self {
+        site.0.pos -= 1;
+        site.0
+    }
+}
+
+impl Closure {
+    pub fn new(long_seq: &[usize]) -> Self {
+        let max_length = long_seq.iter().max().expect("No sequences") + 2;
+        let sequences = Closure::init_sequences(long_seq);
+        let nbr_seqs = sequences.len();
+
+        let pred_frontier = Matrix::zeros([max_length, nbr_seqs]);
+        let succ_frontier = Matrix::zeros([max_length, nbr_seqs]);
+        let alig_set = vec![
+            PositionSet {
+                pos: vec![0; nbr_seqs]
+            };
+            max_length
+        ];
+
+        let gauche1 = vec![0; nbr_seqs];
+        let gauche2 = vec![0; nbr_seqs];
+        let droite1 = vec![0; nbr_seqs];
+        let droite2 = vec![0; nbr_seqs];
+
+        let pos = Matrix::zeros([nbr_seqs, nbr_seqs]);
         Self {
-            succ,
-            pred,
-            pred_buf,
-            succ_buf,
+            max_length,
+            sequences,
+            pred_frontier,
+            succ_frontier,
+            alig_set,
+            left1: gauche1,
+            nbr_alig_sets: 0,
+            old_nbr_alig_sets: 0,
+            left2: gauche2,
+            right1: droite1,
+            right2: droite2,
+            pos,
         }
     }
 
-    pub fn add_diagonal(&mut self, diagonal: &mut MicroAlignment) -> bool {
+    fn init_sequences(long_seq: &[usize]) -> Vec<Sequence> {
+        long_seq
+            .iter()
+            .enumerate()
+            .map(|(id, len)| {
+                let padded_len = len + 2;
+                Sequence {
+                    length: *len,
+                    alig_set_nbr: vec![0; padded_len],
+                    pred_alig_set_pos: vec![0; padded_len],
+                    succ_alig_set_pos: vec![0; padded_len],
+                }
+            })
+            .collect()
+    }
+
+    pub fn try_add_micro_alignment(&mut self, micro_alignment: &MicroAlignment) -> bool {
+        // dbg!(micro_alignment);
         let mut added = false;
-        // we shift the Diagonal because Sequences starting at pos 1 is easier for the algo
-        shift_diagonal(diagonal, 1);
-        // TODO Maybe we could parallelize at this place
-        let alignable_site_pairs = self.alignable_site_pairs(diagonal);
-        for site_pair in alignable_site_pairs {
-            self.add_site_pair(site_pair);
+        let mut sites_to_add = vec![];
+        for (a, b) in micro_alignment.site_pair_iter() {
+            let (a, b) = (a.into(), b.into());
+            if !self.alignable(a, b) {
+                return false;
+            }
+            if !self.aligned_shifted(a, b) {
+                sites_to_add.push((a, b));
+            }
+        }
+        for (a, b) in sites_to_add {
+            self.add_aligned_positions(a, b);
             added = true;
         }
-        shift_diagonal(diagonal, -1);
-        added
+        return added;
     }
 
-    pub fn sites_are_aligned(&self, x: Site, y: Site) -> bool {
-        let x = shift_site(x, 1);
-        let y = shift_site(y, 1);
-        self.shifted_sites_are_aligned(x, y)
+    pub fn aligned(&self, a: Site, b: Site) -> bool {
+        let (a, b) = (a.into(), b.into());
+        self.aligned_shifted(a, b)
     }
 
-    fn alignable_site_pairs<'a>(&'a self, diag: &'a MicroAlignment) -> Vec<(Site, Site)> {
-        let consistent = diag.site_pair_iter().all(|(Site { seq, pos }, x)| {
-            if seq == 2 && pos == 40 {
-                let a = self.lower_bound(x, seq);
-                let b = self.upper_bound(x, seq);
-            }
-            self.lower_bound(x, seq) <= pos && pos <= self.upper_bound(x, seq)
-        });
-        if !consistent {
-            return vec![];
-        }
-
-        diag.site_pair_iter()
-            .filter(|(a, b)| !self.shifted_sites_are_aligned(*a, *b))
-            .collect_vec()
-    }
-
-    fn shifted_sites_are_aligned(&self, x: Site, y: Site) -> bool {
-        //        dbg!(&x, &y);
-        let x_to_y_frontiers =
-            self.pred.get((x, y.seq)) == y.pos && y.pos == self.succ.get((x, y.seq));
-        let y_to_x_frontiers =
-            self.pred.get((y, x.seq)) == x.pos && x.pos == self.succ.get((y, x.seq));
-        let equal_frontiers = x_to_y_frontiers && y_to_x_frontiers;
-
-        equal_frontiers
-    }
-
-    fn add_site_pair(&mut self, (site_a, site_b): (Site, Site)) {
-        //        eprintln!("{:?}, {:?}", site_a, site_b);
-        self.pred_buf.merge_eq_classes(site_a, site_b);
-        self.succ_buf.merge_eq_classes(site_a, site_b);
-
-        self.succ_buf.next_class.update(site_a, FrontierKind::Succ);
-        self.succ_buf.next_class.update(site_b, FrontierKind::Succ);
-
-        self.pred_buf.next_class.update(site_a, FrontierKind::Pred);
-        self.pred_buf.next_class.update(site_b, FrontierKind::Pred);
-
-        for eq_class_repr in self.succ_buf.iter_eq_classes() {
-            let le_a = self.shifted_le(eq_class_repr, site_a);
-            let le_b = self.shifted_le(eq_class_repr, site_b);
-            for target_seq in 0..self.succ_buf.seq_cnt {
-                let val = if le_a {
-                    min(
-                        self.succ.get((eq_class_repr, target_seq)),
-                        self.succ.get((site_b, target_seq)),
-                    )
-                } else if le_b {
-                    min(
-                        self.succ.get((eq_class_repr, target_seq)),
-                        self.succ.get((site_a, target_seq)),
-                    )
-                } else {
-                    continue;
-                };
-                self.succ_buf.set((eq_class_repr, target_seq), val);
-            }
-        }
-
-        for eq_class_repr in self.pred_buf.iter_eq_classes() {
-            let ge_a = self.shifted_ge(eq_class_repr, site_a);
-            let ge_b = self.shifted_ge(eq_class_repr, site_b);
-            for target_seq in 0..self.pred_buf.seq_cnt {
-                let val = if ge_a {
-                    max(
-                        self.pred.get((eq_class_repr, target_seq)),
-                        self.pred.get((site_b, target_seq)),
-                    )
-                } else if ge_b {
-                    max(
-                        self.pred.get((eq_class_repr, target_seq)),
-                        self.pred.get((site_a, target_seq)),
-                    )
-                } else {
-                    continue;
-                };
-                self.pred_buf.set((eq_class_repr, target_seq), val);
-            }
-        }
-
-        self.succ.clone_from(&self.succ_buf);
-        self.pred.clone_from(&self.pred_buf);
-
-        assert!(self.shifted_sites_are_aligned(site_a, site_b));
-    }
-
-    fn lower_bound(&self, origin_site: Site, target_seq: usize) -> usize {
-        let pred = self.pred.get((origin_site, target_seq));
-        let succ = self.succ.get((origin_site, target_seq));
-
-        if pred == succ {
-            pred
-        } else {
-            pred + 1
-        }
-    }
-
-    fn upper_bound(&self, origin_site: Site, target_seq: usize) -> usize {
-        let pred = self.pred.get((origin_site, target_seq));
-        let succ = self.succ.get((origin_site, target_seq));
-
-        if pred == succ {
-            pred
-        } else {
-            succ - 1
-        }
+    fn aligned_shifted(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
+        let (a, b) = (a.0, b.0);
+        a.seq == b.seq && a.pos == b.pos
+            || self.sequences[a.seq].alig_set_nbr[a.pos] != 0
+                && self.sequences[a.seq].alig_set_nbr[a.pos]
+                    == self.sequences[b.seq].alig_set_nbr[b.pos]
     }
 
     pub fn less(&self, left: Site, right: Site) -> bool {
-        let left = shift_site(left, 1);
-        let right = shift_site(right, 1);
-        self.shifted_less(left, right)
+        let (left, right) = (left.into(), right.into());
+        self.path_exists(left, right)
     }
 
-    fn shifted_less(&self, left: Site, right: Site) -> bool {
-        let a = match self.pred.get((right, left.seq)) {
-            val if val == self.pred.default_val => false,
-            val => left.pos < val,
-        };
-        let b = match self.succ.get((left, right.seq)) {
-            val if val == self.succ.default_val => false,
-            val => val < right.pos,
-        };
-
-        a || b
-    }
-
-    fn shifted_le(&self, left: Site, right: Site) -> bool {
-        match self.pred.get((right, left.seq)) {
-            //            val if val == self.pred.default_val => false,
-            val => left.pos <= val,
-        }
-    }
-
-    pub fn greater(&self, left: Site, right: Site) -> bool {
-        let left = shift_site(left, 1);
-        let right = shift_site(right, 1);
-        self.shifted_greater(left, right)
-    }
-
-    fn shifted_greater(&self, left: Site, right: Site) -> bool {
-        let a = match self.succ.get((right, left.seq)) {
-            val if val == self.succ.default_val => false,
-            val => left.pos > val,
-        };
-        let b = match self.pred.get((left, right.seq)) {
-            val if val == self.pred.default_val => false,
-            val => val > right.pos,
-        };
-        a || b
-    }
-
-    fn shifted_ge(&self, left: Site, right: Site) -> bool {
-        match self.succ.get((right, left.seq)) {
-            //            val if val == self.succ.default_val => false,
-            val => left.pos >= val,
-        }
-    }
-}
-
-fn shift_diagonal(diagonal: &mut MicroAlignment, shift: i64) {
-    for start_site in diagonal.start_sites.iter_mut() {
-        start_site.pos = (i64::try_from(start_site.pos).unwrap() + shift)
-            .try_into()
-            .unwrap();
-    }
-}
-
-pub fn shift_site(a: Site, shift: i64) -> Site {
-    Site {
-        seq: a.seq,
-        pos: (i64::try_from(a.pos).unwrap() + shift).try_into().unwrap(),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TransitiveFrontier {
-    default_val: usize,
-    kind: FrontierKind,
-    seq_cnt: usize,
-    next_class: NextClass,
-    eq_classes: EqClasses,
-    frontiers: Vec<Option<Vec<Cell<usize>>>>,
-}
-
-#[derive(Eq, PartialEq, Clone, Copy, Debug)]
-enum FrontierKind {
-    Pred,
-    Succ,
-}
-
-impl FrontierKind {
-    fn get_default_val(&self) -> usize {
-        match self {
-            FrontierKind::Pred => 0,
-            FrontierKind::Succ => std::usize::MAX,
-        }
-    }
-}
-
-impl TransitiveFrontier {
-    fn new(max_seq_len: usize, seq_cnt: usize, kind: FrontierKind) -> Self {
-        let next_class = NextClass::new(max_seq_len, seq_cnt);
-        let eq_classes = EqClasses::new(max_seq_len, seq_cnt);
-
-        let frontiers = vec![None; max_seq_len * seq_cnt];
-        Self {
-            default_val: kind.get_default_val(),
-            kind: kind,
-            seq_cnt,
-            next_class,
-            eq_classes,
-            frontiers,
-        }
-    }
-
-    fn get(&self, index: (Site, usize)) -> usize {
-        if index.0.seq == index.1 {
-            return index.0.pos;
-        }
-
-        let repr = self.eq_classes.find(index.0);
-        match &self.frontiers[self.eq_classes.site_to_idx(repr)] {
-            Some(frontiers) => frontiers[index.1].get(),
-            None => {
-                let next_class_pos = self.next_class[index.0];
-                let next_class = Site {
-                    seq: index.0.seq,
-                    pos: next_class_pos,
-                };
-
-                if next_class_pos == NextClass::DEFAULT_VAL {
-                    return self.default_val;
-                }
-
-                let repr = self.eq_classes.find(next_class);
-                let frontiers = self.frontiers[self.eq_classes.site_to_idx(repr)]
-                    .as_ref()
-                    .unwrap_or_else(|| {
-                        panic!("Index: Next class repr {:?} not in frontiers", repr)
-                    });
-                frontiers[index.1].get()
-            }
-        }
-    }
-
-    fn set(&self, index: (Site, usize), val: usize) {
-        //        let old_val = self.frontiers.get(&index.0).unwrap()[index.1].get();
-        //        if index.0.seq == index.1 && index.0.pos != val {
-        //            panic!("{} {} {:?}", old_val, val, index)
-        //        }
-        self.frontiers[self.eq_classes.site_to_idx(index.0)]
-            .as_ref()
-            .expect("set must be called with repr")[index.1]
-            .set(val);
-    }
-
-    fn merge_eq_classes(&mut self, a: Site, b: Site) {
-        let a_repr = self.eq_classes.find(a);
-        let b_repr = self.eq_classes.find(b);
-
-        if !self.eq_classes.union(a_repr, b_repr) {
-            //            return ();
-            panic!(
-                            "Called TransitiveFrontier::align on sites [{:?}, {:?}], repr: {:?} that were already aligned. \
-                        This is likely a bug.",
-                            a, b, a_repr
-                        )
-        }
-        let unified_repr = self.eq_classes.find(a_repr);
-        let (remove_repr, update_repr) = if a_repr == unified_repr {
-            (b_repr, a_repr)
-        } else if b_repr == unified_repr {
-            (a_repr, b_repr)
+    fn alignable(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
+        if self.path_exists(a, b) {
+            self.path_exists(b, a)
         } else {
-            panic!(
-                "Broke invariant that after union one of the \
-                                former reprs must be the repr of the unified set"
-            )
-        };
-
-        let (default_val, seq_cnt) = (self.default_val, self.seq_cnt);
-
-        let removed_frontier = &self.frontiers[self.eq_classes.site_to_idx(remove_repr)].take();
-        let update_frontier = &self.frontiers[self.eq_classes.site_to_idx(update_repr)];
-
-        let create_default_front = |site: Site| {
-            let mut front = vec![Cell::new(default_val); seq_cnt];
-            front[site.seq].set(site.pos);
-            front
-        };
-
-        let do_front_update = |update_front: &Vec<_>, removed_front: &Vec<_>| {
-            update_front.iter().enumerate().zip(removed_front).for_each(
-                |((idx, l), r): ((_, &Cell<usize>), &Cell<usize>)| {
-                    let r = r.get();
-
-                    if self.kind == FrontierKind::Pred {
-                        l.set(max(l.get(), r))
-                    } else {
-                        l.set(min(l.get(), r))
-                    }
-                },
-            )
-        };
-
-        match (update_frontier, removed_frontier) {
-            (Some(update_front), Some(removed_front)) => {
-                do_front_update(update_front, removed_front);
-            }
-            (Some(update_front), None) => update_front[remove_repr.seq].set(remove_repr.pos),
-            (None, Some(removed_front)) => {
-                let mut front = create_default_front(update_repr);
-                do_front_update(&front, removed_front);
-                self.frontiers[self.eq_classes.site_to_idx(unified_repr)] = Some(front);
-            }
-            (None, None) => {
-                let mut front = create_default_front(update_repr);
-                front[remove_repr.seq].set(remove_repr.pos);
-                self.frontiers[self.eq_classes.site_to_idx(unified_repr)] = Some(front);
-            }
+            self.path_exists(b, a).not()
         }
     }
 
-    pub fn iter_eq_classes(&self) -> impl Iterator<Item = Site> + '_ {
-        self.frontiers
-            .iter()
-            .enumerate()
-            .filter(|(_idx, front)| front.is_some())
-            .map(move |(idx, _)| self.eq_classes.idx_to_site(idx))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct NextClass {
-    data: Array2<usize>,
-}
-
-impl NextClass {
-    const DEFAULT_VAL: usize = 0;
-    fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        //TODO this probably need to be initialized with something else than 0
-        // also the shape might be off
-        let data = Array2::zeros((seq_cnt, max_seq_len));
-        Self { data }
-    }
-
-    fn update(&mut self, aligned_site: Site, frontier_kind: FrontierKind) {
-        let orig_next_class = self.data[[aligned_site.seq, aligned_site.pos]];
-        let mut slice = match frontier_kind {
-            FrontierKind::Succ => self
-                .data
-                .slice_mut(s![aligned_site.seq, ..aligned_site.pos+1;-1]),
-            FrontierKind::Pred => self
-                .data
-                .slice_mut(s![aligned_site.seq, aligned_site.pos..]),
-        };
-        slice
-            .iter_mut()
-            .take_while(|next_class| **next_class == orig_next_class)
-            .for_each(|next_class| *next_class = aligned_site.pos);
-    }
-}
-
-impl Index<Site> for NextClass {
-    type Output = usize;
-
-    fn index(&self, index: Site) -> &Self::Output {
-        &self.data[[index.seq, index.pos]]
-    }
-}
-
-impl IndexMut<Site> for NextClass {
-    fn index_mut(&mut self, index: Site) -> &mut Self::Output {
-        &mut self.data[[index.seq, index.pos]]
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct EqClasses {
-    seq_cnt: usize,
-    max_seq_len: usize,
-    data: UnionFind,
-}
-
-impl EqClasses {
-    fn new(max_seq_len: usize, seq_cnt: usize) -> Self {
-        // TODO is this the correct number of elements
-        let data = UnionFind::new(seq_cnt, max_seq_len);
-        Self {
-            seq_cnt,
-            max_seq_len,
-            data,
+    fn path_exists(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
+        let (a, b) = (a.0, b.0);
+        if a.seq == b.seq {
+            return a.pos < b.pos;
+        }
+        let mut n2 = self.sequences[b.seq].alig_set_nbr[b.pos];
+        if n2 == 0 {
+            let k = self.sequences[b.seq].pred_alig_set_pos[b.pos];
+            if k > 0 {
+                n2 = self.sequences[b.seq].alig_set_nbr[k];
+            }
+        }
+        if n2 == 0 {
+            false
+        } else {
+            a.pos <= self.pred_frontier[[n2, a.seq]]
         }
     }
-    fn find(&self, site: Site) -> Site {
-        self.data.find(site)
-    }
-    fn union(&mut self, a: Site, b: Site) -> bool {
-        self.data.union(a, b)
-    }
 
-    fn site_to_idx(&self, site: Site) -> usize {
-        site.seq * self.max_seq_len + site.pos
-    }
-    fn idx_to_site(&self, idx: usize) -> Site {
-        let (seq, pos) = idx.div_rem(&self.max_seq_len);
-        Site { seq, pos }
-    }
-}
-
-// impl PartialEq for EqClasses {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.seq_cnt == other.seq_cnt
-//             && self.max_seq_len == other.max_seq_len
-//             && self.data.clone().into_labeling() == other.data.clone().into_labeling()
-//     }
-// }
-
-#[cfg(test)]
-mod tests {
-    use std::ops::Not;
-
-    use itertools::Itertools;
-    use ndarray::{arr2, arr3};
-    use smallvec::SmallVec;
-
-    use super::*;
-
-    macro_rules! s {
-        ($seq:expr, $pos:expr) => {
-            Site {
-                seq: $seq,
-                pos: $pos,
-            }
-        };
-    }
-
-    //    #[test]
-    //    fn test_new_trans_frontier() {
-    //        let actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
-    //        let expected = arr3(&[
-    //            [[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]],
-    //            [[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]],
-    //            [[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]],
-    //        ]);
-    //        assert_eq!(actual.data, expected);
-    //    }
-    //
-    //    #[test]
-    //    fn iter_origin_sequences() {
-    //        let mut actual: TransitiveFrontier<Option<usize>> = TransitiveFrontier::new(2, 3, None);
-    //        let expected = vec![
-    //            arr2(&[[Some(0), Some(1), Some(2), Some(3)], [None; 4], [None; 4]]),
-    //            arr2(&[[None; 4], [Some(0), Some(1), Some(2), Some(3)], [None; 4]]),
-    //            arr2(&[[None; 4], [None; 4], [Some(0), Some(1), Some(2), Some(3)]]),
-    //        ];
-    //
-    //        assert_eq!(actual.iter_origin_sequences().collect_vec(), expected);
-    //    }
-
-    #[test]
-    fn shift_diagonal_test() {
-        let mut diag = MicroAlignment {
-            start_sites: SmallVec::from_vec(vec![Site { seq: 2, pos: 3 }, Site { seq: 4, pos: 6 }]),
-            k: 2,
-        };
-
-        let mut expected_diag = MicroAlignment {
-            start_sites: SmallVec::from_vec(vec![Site { seq: 2, pos: 4 }, Site { seq: 4, pos: 7 }]),
-            k: 2,
-        };
-
-        shift_diagonal(&mut diag, 1);
-
-        assert_eq!(diag, expected_diag)
-    }
-
-    #[test]
-    fn add_site_pair() {
-        let mut closure = TransitiveClosure::new(15, 10);
-
-        let a = Site { seq: 0, pos: 1 };
-        let b = Site { seq: 1, pos: 6 };
-        let c = Site { seq: 2, pos: 10 };
-        let d = Site { seq: 3, pos: 8 };
-
-        closure.add_site_pair((a, b));
-        assert!(closure.shifted_sites_are_aligned(a, b));
-        closure.add_site_pair((d, c));
-        assert!(closure.shifted_sites_are_aligned(d, c));
-        assert!(closure.shifted_sites_are_aligned(b, c).not());
-        closure.add_site_pair((b, d));
-        assert!(closure.shifted_sites_are_aligned(b, c));
-        assert!(closure.shifted_sites_are_aligned(a, c));
-        assert!(closure.shifted_sites_are_aligned(a, d));
-    }
-
-    #[test]
-    fn add_site_pair_reversed_sites() {
-        let mut closures = [
-            TransitiveClosure::new(15, 10),
-            TransitiveClosure::new(15, 10),
-        ];
-
-        let a = Site { seq: 0, pos: 1 };
-        let b = Site { seq: 1, pos: 6 };
-
-        closures[0].add_site_pair((a, b));
-        closures[1].add_site_pair((b, a));
-
-        assert_eq!(closures[0], closures[1])
-    }
-
-    #[test]
-    fn add_site_cycle() {
-        let mut closure = TransitiveClosure::new(2, 3);
-
-        let a = Site { seq: 0, pos: 1 };
-        let b = Site { seq: 1, pos: 1 };
-        let c = Site { seq: 2, pos: 1 };
-
-        closure.add_site_pair((a, b));
-        closure.add_site_pair((b, c));
-        let tmp_closure = closure.clone();
-        closure.add_site_pair((c, a));
-
-        assert_eq!(closure, tmp_closure);
-        assert!(closure.shifted_sites_are_aligned(a, b));
-        assert!(closure.shifted_sites_are_aligned(b, c));
-        assert!(closure.shifted_sites_are_aligned(c, a));
-    }
-
-    #[test]
-    fn corner_case() {
-        macro_rules! s {
-            ($seq:expr, $pos:expr) => {
-                Site {
-                    seq: $seq,
-                    pos: $pos,
+    pub fn eq_classes(&self) -> Vec<Vec<Site>> {
+        let mut classes = vec![vec![]; self.nbr_alig_sets];
+        for (idx, seq) in self.sequences.iter().enumerate() {
+            for (pos, alig_set) in seq.alig_set_nbr.iter().enumerate().skip(1) {
+                if *alig_set == 0 {
+                    continue;
                 }
-            };
+                let site: Site = ShiftedSite(Site { seq: idx, pos }).into();
+                let alig_set = alig_set - 1;
+                classes[alig_set].push(site);
+            }
         }
-        let mut closure = TransitiveClosure::new(15, 10);
-        let site_pairs = vec![
-            (s!(0, 1), s!(1, 1)),
-            (s!(0, 3), s!(1, 3)),
-            (s!(1, 2), s!(3, 2)),
-        ];
-
-        for site_pair in site_pairs.into_iter() {
-            closure.add_site_pair(site_pair);
-        }
-        assert!(closure.shifted_sites_are_aligned(s!(0, 2), s!(1, 2)).not());
-        assert!(closure.shifted_sites_are_aligned(s!(0, 2), s!(3, 2)).not());
+        classes
     }
 
-    #[test]
-    fn corner_case_2() {
-        let mut closure = TransitiveClosure::new(15, 10);
-        let site_pairs = vec![
-            (s!(0, 1), s!(1, 1)),
-            (s!(0, 1), s!(2, 1)),
-            (s!(0, 1), s!(3, 1)),
-        ];
+    // fn pred_frontier(&self, origin_site: ShiftedSite, target_seq: usize) -> usize {
+    //     let s = origin_site.0;
+    //     let mut n = self.sequences[s.seq].alig_set_nbr[s.pos];
+    //     if n == 0 {
+    //         let k = self.sequences[s.seq].pred_alig_set_pos[s.pos];
+    //         if k > 0 {
+    //             n = self.sequences[s.seq].alig_set_nbr[k];
+    //         }
+    //     }
+    //     if n > 0 {
+    //         self.pred_frontier[[n, target_seq]]
+    //     } else {
+    //         0
+    //     }
+    // }
+    //
+    // fn succ_frontier(&self, origin_site: ShiftedSite, target_seq: usize) -> usize {
+    //     let s = origin_site.0;
+    //     let mut n = self.sequences[s.seq].alig_set_nbr[s.pos];
+    //     if n == 0 {
+    //         let k = self.sequences[s.seq].succ_alig_set_pos[s.pos];
+    //         if k > 0 {
+    //             n = self.sequences[s.seq].alig_set_nbr[k];
+    //         }
+    //     }
+    //     if n > 0 {
+    //         self.succ_frontier[[n, target_seq]]
+    //     } else {
+    //         self.sequences[target_seq].len() + 1
+    //     }
+    // }
 
-        for site_pair in site_pairs.into_iter() {
-            closure.add_site_pair(site_pair);
+    fn add_aligned_positions(&mut self, a: ShiftedSite, b: ShiftedSite) {
+        let (a, b) = (a.0, b.0);
+        let n1 = self.sequences[a.seq].alig_set_nbr[a.pos];
+        let mut ng1 = n1;
+        let mut nd1 = n1;
+
+        let n2 = self.sequences[b.seq].alig_set_nbr[b.pos];
+        let mut ng2 = n2;
+        let mut nd2 = n2;
+
+        if !(n1 == 0 || n2 == 0 || n1 != n2) {
+            return;
         }
-        assert!(closure.shifted_sites_are_aligned(s!(1, 1), s!(3, 1)));
-    }
-
-    #[test]
-    fn greater_and_less() {
-        let mut closure = TransitiveClosure::new(15, 10);
-        let site_pairs = vec![(s!(0, 1), s!(1, 1))];
-
-        for site_pair in site_pairs.into_iter() {
-            closure.add_site_pair(site_pair);
-        }
-        assert!(closure.shifted_less(s!(0, 0), s!(1, 1)));
-        assert!(closure.shifted_greater(s!(0, 0), s!(1, 1)).not());
-
-        assert!(closure.shifted_greater(s!(1, 2), s!(0, 1)));
-        assert!(closure.shifted_less(s!(1, 2), s!(0, 1)).not());
-    }
-
-    #[test]
-    fn compare() {
-        let mut closure = TransitiveClosure::new(15, 10);
-        let site_pairs = vec![
-            (s!(0, 1), s!(1, 1)),
-            (s!(2, 1), s!(3, 1)),
-            (s!(1, 2), s!(2, 2)),
-        ];
-
-        for site_pair in site_pairs.into_iter() {
-            closure.add_site_pair(site_pair);
+        if ng1 == 0 {
+            let mut k = self.sequences[a.seq].pred_alig_set_pos[a.pos];
+            if k > 0 {
+                ng1 = self.sequences[a.seq].alig_set_nbr[k];
+            }
+            k = self.sequences[a.seq].succ_alig_set_pos[a.pos];
+            if k > 0 {
+                nd1 = self.sequences[a.seq].alig_set_nbr[k];
+            }
         }
 
-        assert!(closure.shifted_greater(s!(1, 1), s!(2, 1)).not());
-        assert!(closure.shifted_less(s!(1, 1), s!(2, 1)).not());
-        assert!(closure.shifted_greater(s!(2, 2), s!(2, 1)));
-        assert!(closure.shifted_less(s!(2, 1), s!(2, 2)));
-    }
-
-    #[test]
-    fn ge_and_le() {
-        let mut closure = TransitiveClosure::new(15, 10);
-        let site_pairs = vec![(s!(0, 1), s!(1, 1))];
-
-        for site_pair in site_pairs.into_iter() {
-            closure.add_site_pair(site_pair);
+        if ng2 == 0 {
+            let mut k = self.sequences[b.seq].pred_alig_set_pos[b.pos];
+            if k > 0 {
+                ng2 = self.sequences[b.seq].alig_set_nbr[k];
+            }
+            k = self.sequences[b.seq].succ_alig_set_pos[b.pos];
+            if k > 0 {
+                nd2 = self.sequences[b.seq].alig_set_nbr[k];
+            }
         }
-        assert!(closure.shifted_le(s!(0, 0), s!(1, 1)));
-        assert!(closure.shifted_ge(s!(0, 0), s!(1, 1)).not());
 
-        assert!(closure.shifted_ge(s!(1, 2), s!(0, 1)));
-        assert!(closure.shifted_le(s!(1, 2), s!(0, 1)).not());
+        if ng1 == 0 {
+            self.left1.iter_mut().for_each(|x| *x = 0);
+        } else {
+            assert!(
+                ng1 < self.pred_frontier.rows(),
+                format!("{}, {}", ng1, self.pred_frontier.rows())
+            );
+            let pred_frontier = self.pred_frontier.row(ng1);
+            self.left1
+                .iter_mut()
+                .zip(pred_frontier)
+                .for_each(|(g1, pred)| *g1 = *pred);
+        }
+
+        if nd1 == 0 {
+            self.right1
+                .iter_mut()
+                .zip(&self.sequences)
+                .for_each(|(d1, seq)| *d1 = seq.len() + 1);
+        } else {
+            let succ_frontier = self.succ_frontier.row(nd1);
+            self.right1
+                .iter_mut()
+                .zip(succ_frontier)
+                .for_each(|(d1, succ)| *d1 = *succ);
+        }
+
+        if ng2 == 0 {
+            self.left2.iter_mut().for_each(|g2| *g2 = 0);
+        } else {
+            let pred_frontier = self.pred_frontier.row(ng2);
+            self.left2
+                .iter_mut()
+                .zip(pred_frontier)
+                .for_each(|(g2, pred)| *g2 = *pred);
+        }
+
+        if nd2 == 0 {
+            self.right2
+                .iter_mut()
+                .zip(&self.sequences)
+                .for_each(|(d1, seq)| *d1 = seq.len() + 1);
+        } else {
+            let succ_frontier = self.succ_frontier.row(nd2);
+            self.right2
+                .iter_mut()
+                .zip(succ_frontier)
+                .for_each(|(d2, succ)| *d2 = *succ);
+        }
+
+        self.left1[a.seq] = a.pos;
+        self.right1[a.seq] = a.pos;
+
+        self.left2[b.seq] = b.pos;
+        self.right2[b.seq] = b.pos;
+
+        let nn = self.nbr_alig_sets + 1;
+        for x in 0..self.sequences.len() {
+            self.alig_set[nn].pos[x] = 0;
+            if n1 > 0 && self.alig_set[n1].pos[x] > 0 {
+                self.alig_set[nn].pos[x] = self.alig_set[n1].pos[x];
+            } else {
+                if n2 > 0 && self.alig_set[n2].pos[x] > 0 {
+                    self.alig_set[nn].pos[x] = self.alig_set[n2].pos[x];
+                }
+            }
+
+            if self.alig_set[nn].pos[x] == 0 {
+                self.pred_frontier[[nn, x]] = std::cmp::max(self.left1[x], self.left2[x]);
+                self.succ_frontier[[nn, x]] = std::cmp::min(self.right1[x], self.right2[x]);
+            } else {
+                self.pred_frontier[[nn, x]] = self.alig_set[nn].pos[x];
+                self.succ_frontier[[nn, x]] = self.alig_set[nn].pos[x];
+            }
+        }
+        self.pred_frontier[[nn, a.seq]] = a.pos;
+        self.succ_frontier[[nn, a.seq]] = a.pos;
+        self.alig_set[nn].pos[a.seq] = a.pos;
+
+        self.pred_frontier[[nn, b.seq]] = b.pos;
+        self.succ_frontier[[nn, b.seq]] = b.pos;
+        self.alig_set[nn].pos[b.seq] = b.pos;
+
+        for x in 0..self.sequences.len() {
+            let k = self.alig_set[nn].pos[x];
+            if k > 0 {
+                self.sequences[x].alig_set_nbr[k] = nn;
+            }
+        }
+
+        for x in 0..self.sequences.len() {
+            if self.right1[x] == self.right2[x] {
+                continue;
+            }
+            for y in 0..self.sequences.len() {
+                self.pos[[x, y]] = 0;
+                let mut k = self.succ_frontier[[nn, x]];
+                if k == self.alig_set[nn].pos[x] {
+                    k = self.sequences[x].succ_alig_set_pos[k];
+                }
+                if k <= self.sequences[x].len() {
+                    while k > 0 {
+                        let n = self.sequences[x].alig_set_nbr[k];
+                        if self.pred_frontier[[n, y]] < self.pred_frontier[[nn, y]] {
+                            self.pos[[x, y]] = k;
+                            k = self.sequences[x].succ_alig_set_pos[k];
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for x in 0..self.sequences.len() {
+            if self.right1[x] == self.right2[x] {
+                continue;
+            }
+            for y in 0..self.sequences.len() {
+                let mut k = self.succ_frontier[[nn, x]];
+                if k == self.alig_set[nn].pos[x] {
+                    k = self.sequences[x].succ_alig_set_pos[k];
+                }
+                if self.pos[[x, y]] > 0 {
+                    while k > 0 && k <= self.pos[[x, y]] {
+                        let n = self.sequences[x].alig_set_nbr[k];
+                        self.pred_frontier[[n, y]] = self.pred_frontier[[nn, y]];
+                        k = self.sequences[x].succ_alig_set_pos[k];
+                    }
+                }
+            }
+        }
+
+        for x in 0..self.sequences.len() {
+            if self.left1[x] == self.left2[x] {
+                continue;
+            }
+            for y in 0..self.sequences.len() {
+                self.pos[[x, y]] = 0;
+                let mut k = self.pred_frontier[[nn, x]];
+                if k > 0 && k == self.alig_set[nn].pos[x] {
+                    k = self.sequences[x].pred_alig_set_pos[k];
+                }
+                while k > 0 {
+                    let n = self.sequences[x].alig_set_nbr[k];
+                    if self.succ_frontier[[n, y]] > self.succ_frontier[[nn, y]] {
+                        self.pos[[x, y]] = k;
+                        k = self.sequences[x].pred_alig_set_pos[k];
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for x in 0..self.sequences.len() {
+            if self.left1[x] == self.left2[x] {
+                continue;
+            }
+            for y in 0..self.sequences.len() {
+                let mut k = self.pred_frontier[[nn, x]];
+                if k > 0 && k == self.alig_set[nn].pos[x] {
+                    k = self.sequences[x].pred_alig_set_pos[k];
+                }
+                if self.pos[[x, y]] > 0 {
+                    while k >= self.pos[[x, y]] {
+                        let n = self.sequences[x].alig_set_nbr[k];
+                        self.succ_frontier[[n, y]] = self.succ_frontier[[nn, y]];
+                        k = self.sequences[x].pred_alig_set_pos[k];
+                    }
+                }
+            }
+        }
+
+        if n1 == 0 {
+            let mut k = a.pos - 1;
+            while k > 0 && self.sequences[a.seq].alig_set_nbr[k] == 0 {
+                self.sequences[a.seq].succ_alig_set_pos[k] = a.pos;
+                k -= 1;
+            }
+            if k > 0 {
+                self.sequences[a.seq].succ_alig_set_pos[k] = a.pos;
+            }
+
+            let mut k = a.pos + 1;
+            while k <= self.sequences[a.seq].len() && self.sequences[a.seq].alig_set_nbr[k] == 0 {
+                self.sequences[a.seq].pred_alig_set_pos[k] = a.pos;
+                k += 1;
+            }
+            if k <= self.sequences[a.seq].len() {
+                self.sequences[a.seq].pred_alig_set_pos[k] = a.pos
+            }
+        }
+
+        if n2 == 0 {
+            let mut k = b.pos - 1;
+            while k > 0 && self.sequences[b.seq].alig_set_nbr[k] == 0 {
+                self.sequences[b.seq].succ_alig_set_pos[k] = b.pos;
+                k -= 1;
+            }
+            if k > 0 {
+                self.sequences[b.seq].succ_alig_set_pos[k] = b.pos;
+            }
+
+            let mut k = b.pos + 1;
+            while k <= self.sequences[b.seq].len() && self.sequences[b.seq].alig_set_nbr[k] == 0 {
+                self.sequences[b.seq].pred_alig_set_pos[k] = b.pos;
+                k += 1;
+            }
+            if k <= self.sequences[b.seq].len() {
+                self.sequences[b.seq].pred_alig_set_pos[k] = b.pos
+            }
+        }
+
+        let (n1, n2) = if n1 > n2 { (n2, n1) } else { (n1, n2) };
+
+        if n2 == 0 {
+            self.nbr_alig_sets += 1;
+            self.realloc();
+        } else {
+            if n1 == 0 {
+                self.move_alig_set(n2, nn)
+            } else {
+                self.move_alig_set(n1, nn);
+                if n2 < self.nbr_alig_sets {
+                    self.move_alig_set(n2, self.nbr_alig_sets)
+                }
+                self.nbr_alig_sets -= 1;
+                self.realloc();
+            }
+        }
     }
 
-    #[test]
-    fn test_next_class_succ() {
-        let mut next_class = NextClass::new(10, 1);
-        next_class.update(s!(0, 3), FrontierKind::Succ);
-        next_class.update(s!(0, 8), FrontierKind::Succ);
-
-        assert_eq!(arr2(&[[3, 3, 3, 3, 8, 8, 8, 8, 8, 0]]), next_class.data);
+    fn move_alig_set(&mut self, n1: usize, n2: usize) {
+        for x in 0..self.sequences.len() {
+            let k = self.alig_set[n2].pos[x];
+            self.alig_set[n1].pos[x] = k;
+            if k > 0 {
+                self.sequences[x].alig_set_nbr[k] = n1;
+            }
+            self.pred_frontier[[n1, x]] = self.pred_frontier[[n2, x]];
+            self.succ_frontier[[n1, x]] = self.succ_frontier[[n2, x]];
+        }
     }
 
-    #[test]
-    fn test_next_class_pred() {
-        let mut next_class = NextClass::new(10, 1);
-        next_class.update(s!(0, 3), FrontierKind::Pred);
-        next_class.update(s!(0, 8), FrontierKind::Pred);
-
-        assert_eq!(arr2(&[[0, 0, 0, 3, 3, 3, 3, 3, 8, 8]]), next_class.data);
+    fn realloc(&mut self) {
+        if self.nbr_alig_sets <= self.old_nbr_alig_sets {
+            return;
+        }
+        let new_rows = self.nbr_alig_sets + 2;
+        self.pred_frontier.resize_rows(new_rows);
+        self.succ_frontier.resize_rows(new_rows);
+        self.alig_set.resize(
+            self.nbr_alig_sets + 2,
+            PositionSet {
+                pos: vec![0; self.sequences.len()],
+            },
+        );
+        self.old_nbr_alig_sets = self.nbr_alig_sets;
     }
 }

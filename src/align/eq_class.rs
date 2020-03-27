@@ -1,4 +1,4 @@
-use crate::align::gabios_v2::Closure as TransitiveClosure;
+use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::{ScoredMicroAlignment, Site};
 use crate::data_loaders::Sequence;
 use fxhash::{FxHashMap, FxHashSet};

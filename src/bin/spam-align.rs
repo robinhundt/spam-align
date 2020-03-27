@@ -5,9 +5,9 @@ use itertools::Itertools;
 use num_integer::binomial;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use spam_align::align::align;
 use spam_align::align::eq_class::EqClasses;
 use spam_align::align::micro_alignment::Site;
+use spam_align::align::{align, Align};
 use spam_align::data_loaders::balibase::FilterXmlFile;
 use spam_align::data_loaders::{
     balibase, format_as_fasta, write_as_fasta, Alignment, PositionAlignment, Sequence,
@@ -18,18 +18,37 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
+use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-struct Opt {
-    #[structopt(name = "FILE", parse(from_os_str))]
-    in_file: PathBuf,
-    #[structopt(name = "PATTERN_SET", parse(from_os_str))]
-    pattern_set_path: PathBuf,
-    #[structopt(name = "OUT", parse(from_os_str))]
-    out_file: PathBuf,
+enum Opt {
+    Single {
+        #[structopt(name = "FILE", parse(from_os_str))]
+        in_file: PathBuf,
+        #[structopt(name = "PATTERN_SET", parse(from_os_str))]
+        pattern_set_path: PathBuf,
+        #[structopt(name = "OUT", parse(from_os_str))]
+        out_file: PathBuf,
+    },
+    Balibase {
+        #[structopt(
+            name = "BALIBASE PATH",
+            parse(from_os_str),
+            default_value = "data/bb3_release"
+        )]
+        balibase_path: PathBuf,
+        #[structopt(
+            name = "PATTERNS",
+            parse(from_os_str),
+            default_value = "pattern_sets/data"
+        )]
+        patterns_path: PathBuf,
+        #[structopt(name = "OUT", parse(from_os_str))]
+        out_path: PathBuf,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,38 +71,58 @@ struct AlignmentResult {
 
 fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
-    let alignment = balibase::parse_xml_file(opt.in_file)?;
-    let patterns = read_patterns_from_file(opt.pattern_set_path)?;
-    let results = compute_results_for_alignment(&alignment, &patterns);
-    let out_file = File::create(opt.out_file)?;
-    serde_json::to_writer_pretty(out_file, &results)?;
-    // compute_results_for_balibase()?;
+    match opt {
+        Opt::Single {
+            in_file,
+            pattern_set_path,
+            out_file,
+        } => {
+            let alignment = balibase::parse_xml_file(in_file)?;
+            let patterns = read_patterns_from_file(pattern_set_path)?;
+            let results = compute_results_for_alignment(&alignment, &patterns, Align::ShowProgress);
+            let out_file = File::create(out_file)?;
+            serde_json::to_writer_pretty(out_file, &results)?;
+        }
+        Opt::Balibase {
+            balibase_path: balibase_path,
+            patterns_path,
+            out_path,
+        } => {
+            compute_results_for_balibase(balibase_path, patterns_path, out_path)?;
+        }
+    }
+
     Ok(())
 }
 
-fn compute_results_for_balibase() -> Result<()> {
-    let data_path = PathBuf::from("./data/bb3_release/");
+fn compute_results_for_balibase(
+    balibase_path: PathBuf,
+    patterns_path: PathBuf,
+    out_path: PathBuf,
+) -> Result<()> {
     let balibase_folders = ["RV11", "RV12", "RV20", "RV30", "RV50"];
     let balibase_folders = balibase_folders.iter().map(|folder| {
-        let mut path = data_path.clone();
+        let mut path = balibase_path.clone();
         path.push(folder);
         path
     });
     for folder in balibase_folders {
-        let out_folder_path = format!(
-            "./bb-fast-aligned-out/{}",
-            folder.file_name().unwrap().to_str().unwrap()
-        );
+        let mut out_folder_path = out_path.clone();
+        out_folder_path.push(folder.file_name().unwrap());
+
         fs::create_dir_all(&out_folder_path)?;
         for pattern_set_path in fs::read_dir("./pattern_sets/data")? {
             let pattern_set_path = pattern_set_path?;
             let pattern_set = read_patterns_from_file(pattern_set_path.path())?;
             let results = compute_results_for_folder(&folder, &pattern_set)?;
-            let out_file = File::create(format!(
-                "{}/{}",
-                &out_folder_path,
-                pattern_set_path.file_name().to_str().unwrap()
-            ))?;
+            let out_path = PathBuf::from_iter(
+                [
+                    out_folder_path.as_path(),
+                    &pattern_set_path.file_name().as_ref(),
+                ]
+                .iter(),
+            );
+            let out_file = File::create(out_path)?;
             serde_json::to_writer_pretty(out_file, &results)?;
         }
     }
@@ -97,7 +136,7 @@ fn compute_results_for_folder(
     let alignments = balibase::parse_xml_files_in_dir(&path, FilterXmlFile::AllData)?;
     let results = alignments
         .par_iter()
-        .map(|alignment| compute_results_for_alignment(alignment, pattern_set))
+        .map(|alignment| compute_results_for_alignment(alignment, pattern_set, Align::HideProgress))
         .progress_count(alignments.len() as u64)
         .collect();
     Ok(EvaluationResult {
@@ -106,14 +145,18 @@ fn compute_results_for_folder(
     })
 }
 
-fn compute_results_for_alignment(alignment: &Alignment, patterns: &[Pattern]) -> AlignmentResult {
+fn compute_results_for_alignment(
+    alignment: &Alignment,
+    patterns: &[Pattern],
+    progress: Align,
+) -> AlignmentResult {
     let sequences = Sequences::new(&alignment);
     let mut correct_site_pairs: HashSet<(Site, Site), FxBuildHasher> = FxHashSet::default();
     correct_site_pairs.reserve(sequences.total_len() * 10);
     let mut incorrect_site_pairs: HashSet<(Site, Site), FxBuildHasher> = FxHashSet::default();
     incorrect_site_pairs.reserve(sequences.total_len() * 10);
     let now = Instant::now();
-    let (scored_diagonals, closure) = align(&sequences, &patterns);
+    let (scored_diagonals, closure) = align(&sequences, &patterns, progress);
     let eq_classes = EqClasses::new(&scored_diagonals, &closure);
     let mut orig_sequences = alignment.unaligned_data.clone();
     eq_classes.align_sequences(&mut orig_sequences);

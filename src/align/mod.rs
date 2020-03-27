@@ -1,4 +1,4 @@
-use crate::align::gabios_v2::Closure as TransitiveClosure;
+use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::{
     construct_micro_alignments_from_patterns, ScoredMicroAlignment,
 };
@@ -12,12 +12,17 @@ use std::time::Instant;
 
 pub mod eq_class;
 pub mod gabios;
-pub mod gabios_v2;
 pub mod micro_alignment;
+
+pub enum Align {
+    ShowProgress,
+    HideProgress,
+}
 
 pub fn align(
     sequences: &Sequences,
     patterns: &[Pattern],
+    progress: Align,
 ) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {
     let diagonals =
         construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
@@ -32,11 +37,16 @@ pub fn align(
 
     let mut transitive_closure = TransitiveClosure::new(&seq_lengths);
     let num_diagonals = diagonals.len();
-    let progress_bar = ProgressBar::new(num_diagonals as u64);
-    progress_bar.set_draw_delta(num_diagonals as u64 / 100);
-    let added_diagonals = diagonals
-        .into_iter()
-        // .progress_with(progress_bar)
+    let mut added_diagonals: Box<dyn Iterator<Item = ScoredMicroAlignment>> =
+        Box::new(diagonals.into_iter());
+
+    if let Align::ShowProgress = progress {
+        let progress_bar = ProgressBar::new(num_diagonals as u64);
+        progress_bar.set_draw_delta(num_diagonals as u64 / 100);
+        added_diagonals = Box::new(added_diagonals.progress_with(progress_bar));
+    }
+
+    let added_diagonals = added_diagonals
         .filter_map(|mut scored_diag| {
             if transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment) {
                 Some(scored_diag)
