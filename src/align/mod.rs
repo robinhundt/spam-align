@@ -26,12 +26,9 @@ pub fn align(
 ) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {
     let diagonals =
         construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
-    let get_diagonals = Instant::now();
     let mut diagonals = diagonals.collect_vec();
     diagonals.sort_by_cached_key(|diag| -diag.score);
-    println!("Diags: {}", get_diagonals.elapsed().as_secs_f32());
 
-    let add_diagonals = Instant::now();
     // println!("Found {} diagonals", diagonals.len());
     let seq_lengths = sequences.iter().map(|seq| seq.len()).collect_vec();
 
@@ -55,7 +52,6 @@ pub fn align(
             }
         })
         .collect_vec();
-    println!("Add diags: {}", add_diagonals.elapsed().as_secs_f32());
 
     (added_diagonals, transitive_closure)
 }

@@ -22,13 +22,11 @@ impl EqClasses {
     }
 
     fn sort_self(mut self, closure: &TransitiveClosure) -> Self {
-        let now = Instant::now();
         let mut graph = Graph::<&Vec<Site>, ()>::with_capacity(self.classes.len(), 0);
         let mut node_indices = vec![];
         for eq_class in &self.classes {
             node_indices.push(graph.add_node(eq_class));
         }
-        let sort_init = Instant::now();
         for idx1 in &node_indices {
             for idx2 in &node_indices {
                 let class1 = graph.node_weight(*idx1).unwrap();
@@ -40,19 +38,16 @@ impl EqClasses {
                 }
             }
         }
-        println!("Sort init: {}", sort_init.elapsed().as_secs_f32());
         let sorted_indices = toposort(&graph, None).unwrap();
         let sorted_classes = sorted_indices
             .into_iter()
             .map(|idx| graph.node_weight(idx).unwrap().deref().clone())
             .collect_vec();
         self.classes = sorted_classes;
-        println!("Sort: {}", now.elapsed().as_secs_f32());
         self
     }
 
     pub fn align_sequences(&self, seqs: &mut [Sequence]) {
-        let now = Instant::now();
         let mut classes = self.classes.clone();
         classes.reverse();
         while let Some(class) = classes.pop() {
@@ -88,7 +83,6 @@ impl EqClasses {
                 });
             });
         }
-        println!("Align: {}", now.elapsed().as_secs_f32());
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Vec<Site>> {
