@@ -83,6 +83,18 @@ impl EqClasses {
                 });
             });
         }
+
+        // fill ends of seqs with gap '-'
+        let max_len = seqs
+            .iter()
+            .max_by_key(|seq| seq.data.len())
+            .expect("No sequences to align")
+            .data
+            .len();
+        for seq in seqs {
+            let missing_gaps = max_len - seq.data.len();
+            seq.data.extend(repeat_n(b'-', missing_gaps));
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Vec<Site>> {

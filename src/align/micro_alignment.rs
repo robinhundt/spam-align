@@ -88,7 +88,7 @@ impl ScoredMicroAlignment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
 pub struct Site {
     pub seq: usize,
     pub pos: usize,

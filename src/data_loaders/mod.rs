@@ -128,14 +128,15 @@ impl fmt::Debug for Sequence {
 
 impl fmt::Display for Sequence {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}\n{}", self.name, str::from_utf8(&self.data).unwrap())
+        write!(f, ">{}\n{}", self.name, str::from_utf8(&self.data).unwrap())
     }
 }
 
 pub fn format_as_fasta(seqs: &[Sequence]) -> String {
+    use std::fmt::Write;
     let mut buf = String::new();
     for seq in seqs {
-        buf.push_str(&format!("{}\n", seq))
+        writeln!(buf, "{}", seq).expect("Write fasta buffer")
     }
     buf
 }

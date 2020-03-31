@@ -5,6 +5,7 @@ use itertools::Itertools;
 use num_integer::binomial;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use smallvec::alloc::collections::BTreeSet;
 use spam_align::align::eq_class::EqClasses;
 use spam_align::align::micro_alignment::Site;
 use spam_align::align::{align, Align};
@@ -26,11 +27,11 @@ use structopt::StructOpt;
 #[derive(StructOpt, Debug)]
 enum Opt {
     Single {
-        #[structopt(long, name = "FILE", parse(from_os_str))]
+        #[structopt(short = "I", long, name = "FILE", parse(from_os_str))]
         in_file: PathBuf,
-        #[structopt(long, name = "PATTERN_SET", parse(from_os_str))]
+        #[structopt(short = "P", long, name = "PATTERN_SET", parse(from_os_str))]
         pattern_set_path: PathBuf,
-        #[structopt(long, name = "OUT", parse(from_os_str))]
+        #[structopt(short = "o", long, name = "OUT", parse(from_os_str))]
         out_file: PathBuf,
     },
     Balibase {
@@ -66,9 +67,10 @@ struct AlignmentResult {
     false_positive_site_pair_count: usize,
     true_site_pair_count: usize,
     precision: f64,
-    recall: f64,
-    aligned_sequences_fasta: String,
+    sum_of_pairs: f64,
+    column_score: f64,
     alignment_execution_time_ms: u128,
+    aligned_sequences_fasta: String,
 }
 
 fn main() -> Result<()> {
@@ -113,7 +115,7 @@ fn compute_results_for_balibase(
         out_folder_path.push(folder.file_name().unwrap());
 
         fs::create_dir_all(&out_folder_path)?;
-        for pattern_set_path in fs::read_dir("./pattern_sets/data")? {
+        for pattern_set_path in fs::read_dir(&patterns_path)? {
             let pattern_set_path = pattern_set_path?;
             let pattern_set = read_patterns_from_file(pattern_set_path.path())?;
             let results = compute_results_for_folder(&folder, &pattern_set)?;
@@ -164,22 +166,30 @@ fn compute_results_for_alignment(
     eq_classes.align_sequences(&mut orig_sequences);
     let alignment_execution_time = now.elapsed();
 
+    let mut correct_columns = 0;
     for eq_class in eq_classes.iter() {
+        let mut correct = true;
         for (&s1, &s2) in eq_class.iter().tuple_combinations() {
             let consistent = alignment.pos_aligned(s1, s2);
             match consistent {
                 PositionAlignment::Correct => {
                     correct_site_pairs.insert((s1, s2));
-                    correct_site_pairs.insert((s2, s1));
                 }
                 PositionAlignment::Incorrect => {
                     incorrect_site_pairs.insert((s1, s2));
-                    incorrect_site_pairs.insert((s2, s1));
+                    correct = false;
                 }
-                PositionAlignment::Unknown => {}
+                PositionAlignment::Unknown => {
+                    correct = false;
+                }
             }
         }
+        if correct && eq_class.len() == sequences.len() {
+            correct_columns += 1;
+        }
     }
+
+    let column_score = correct_columns as f64 / alignment.core_block_data()[0].data.len() as f64;
 
     let aligned_sequences_fasta = format_as_fasta(&orig_sequences);
 
@@ -192,7 +202,8 @@ fn compute_results_for_alignment(
         false_positive_site_pair_count: fp,
         true_site_pair_count,
         precision: tp as f64 / (tp + fp) as f64,
-        recall: tp as f64 / true_site_pair_count as f64,
+        sum_of_pairs: tp as f64 / true_site_pair_count as f64,
+        column_score,
         aligned_sequences_fasta,
         alignment_execution_time_ms: alignment_execution_time.as_millis(),
     }
@@ -214,7 +225,7 @@ fn true_site_pair_count(alignment: &Alignment) -> usize {
         )
     });
     let max_site_pair_count =
-        aligned_pos_per_col.fold(0, |acc, aligned_count| acc + binomial(aligned_count, 2) * 2);
+        aligned_pos_per_col.fold(0, |acc, aligned_count| acc + binomial(aligned_count, 2));
 
     max_site_pair_count
 }

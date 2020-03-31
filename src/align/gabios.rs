@@ -63,17 +63,17 @@ impl From<ShiftedSite> for Site {
 
 impl Closure {
     pub fn new(long_seq: &[usize]) -> Self {
-        let max_length = long_seq.iter().max().expect("No sequences") + 2;
+        let &max_length = long_seq.iter().max().expect("No sequences");
         let sequences = Closure::init_sequences(long_seq);
         let nbr_seqs = sequences.len();
 
-        let pred_frontier = Matrix::zeros([max_length, nbr_seqs]);
-        let succ_frontier = Matrix::zeros([max_length, nbr_seqs]);
+        let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
+        let succ_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
         let alig_set = vec![
             PositionSet {
                 pos: vec![0; nbr_seqs]
             };
-            max_length
+            max_length + 2
         ];
 
         let gauche1 = vec![0; nbr_seqs];
