@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate anyhow;
 use anyhow::Result;
 use fxhash::{FxBuildHasher, FxHashSet};
 use indicatif::ParallelProgressIterator;
@@ -17,6 +19,7 @@ use spam_align::spaced_word::{read_patterns_from_file, Pattern};
 use spam_align::Sequences;
 use std::collections::HashSet;
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::iter::FromIterator;
@@ -33,6 +36,16 @@ enum Opt {
         pattern_set_path: PathBuf,
         #[structopt(short = "o", long, name = "OUT", parse(from_os_str))]
         out_file: PathBuf,
+    },
+    Score {
+        #[structopt(long = "ref", name = "REF", parse(from_os_str))]
+        ref_alignment: PathBuf,
+        #[structopt(long = "test", name = "TEST", parse(from_os_str))]
+        test_alignment: PathBuf,
+        #[structopt(short = "o", long, name = "OUT", parse(from_os_str))]
+        out_file: PathBuf,
+        #[structopt(short = "i", long)]
+        ignore_symbol_case: bool,
     },
     Balibase {
         #[structopt(
@@ -87,6 +100,17 @@ fn main() -> Result<()> {
             let out_file = File::create(out_file)?;
             serde_json::to_writer_pretty(out_file, &results)?;
         }
+        Opt::Score {
+            ref_alignment,
+            test_alignment,
+            out_file,
+            ignore_symbol_case,
+        } => {
+            let ref_alignment = load_alignment(ref_alignment)?;
+            let test_alignment = load_alignment(test_alignment)?;
+            let scores = compute_scores(&ref_alignment, &test_alignment, ignore_symbol_case);
+            dbg!(scores);
+        }
         Opt::Balibase {
             balibase_path,
             patterns_path,
@@ -97,6 +121,16 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_alignment(path: PathBuf) -> Result<Alignment> {
+    let alignment = match path.extension().and_then(OsStr::to_str) {
+        Some("xml") => balibase::parse_xml_file(path)?,
+        Some("fasta") | Some("tfa") | Some("fa") => Alignment::read_fasta(path)?,
+        Some(unknown) => Err(anyhow!("Unsupported filename extension: {}", unknown))?,
+        None => Err(anyhow!("Invalid filename extension"))?,
+    };
+    Ok(alignment)
 }
 
 fn compute_results_for_balibase(
@@ -163,6 +197,7 @@ fn compute_results_for_alignment(
     let (scored_diagonals, closure) = align(&sequences, &patterns, progress);
     let eq_classes = EqClasses::new(&scored_diagonals, &closure);
     let mut orig_sequences = alignment.unaligned_data.clone();
+    let mut new_alignment = alignment.clone();
     eq_classes.align_sequences(&mut orig_sequences);
     let alignment_execution_time = now.elapsed();
 
@@ -184,6 +219,7 @@ fn compute_results_for_alignment(
                 }
             }
         }
+        // TODO MAYBE THIS IS FALSE
         if correct && eq_class.len() == sequences.len() {
             correct_columns += 1;
         }
@@ -192,6 +228,9 @@ fn compute_results_for_alignment(
     let column_score = correct_columns as f64 / alignment.core_block_data()[0].data.len() as f64;
 
     let aligned_sequences_fasta = format_as_fasta(&orig_sequences);
+
+    new_alignment.aligned_data = orig_sequences;
+    dbg!(compute_scores(alignment, &new_alignment, false));
 
     let true_site_pair_count = true_site_pair_count(alignment);
     let tp = correct_site_pairs.len();
@@ -206,6 +245,89 @@ fn compute_results_for_alignment(
         column_score,
         aligned_sequences_fasta,
         alignment_execution_time_ms: alignment_execution_time.as_millis(),
+    }
+}
+
+#[derive(PartialEq, Copy, Clone, Debug)]
+struct AlignmentScores {
+    sum_of_pairs: f64,
+    column_score: f64,
+}
+
+fn compute_scores(
+    ref_alignment: &Alignment,
+    test_alignment: &Alignment,
+    ignore_symbol_case: bool,
+) -> AlignmentScores {
+    let seq_cnt = test_alignment.aligned_data.len();
+    let mut correctly_aligned = 0;
+    let mut correct_column_count = 0;
+    let test_column_cnt = test_alignment
+        .aligned_data
+        .first()
+        .expect("Empty alignment")
+        .data
+        .len();
+
+    let mut gaps_per_seq = vec![0; seq_cnt];
+    let mut gaps_per_col = vec![0; test_column_cnt];
+    let mut correct_in_column = vec![false; test_column_cnt];
+
+    for column in 0..test_column_cnt {
+        gaps_per_col.iter_mut().for_each(|el| *el = 0);
+        correct_in_column.iter_mut().for_each(|el| *el = false);
+        for (seq_id, seq) in test_alignment.aligned_data.iter().enumerate() {
+            if seq.data[column] == Alignment::GAP_CHARACTER {
+                gaps_per_seq[seq_id] += 1;
+                gaps_per_col[seq_id] += 1;
+            }
+        }
+        for ((a_idx, seq_a), (b_idx, seq_b)) in test_alignment
+            .aligned_data
+            .iter()
+            .enumerate()
+            .tuple_combinations()
+        {
+            let a = seq_a.data[column];
+            let b = seq_b.data[column];
+
+            if a == Alignment::GAP_CHARACTER || b == Alignment::GAP_CHARACTER {
+                continue;
+            }
+
+            let site_a = Site {
+                seq: a_idx,
+                pos: column - gaps_per_seq[a_idx],
+            };
+            let site_b = Site {
+                seq: b_idx,
+                pos: column - gaps_per_seq[b_idx],
+            };
+
+            let symbols_aligned =
+                ignore_symbol_case || a.is_ascii_uppercase() && b.is_ascii_uppercase();
+
+            if symbols_aligned
+                && ref_alignment.pos_aligned(site_a, site_b) == PositionAlignment::Correct
+            {
+                correct_in_column[a_idx] = true;
+                correct_in_column[b_idx] = true;
+                correctly_aligned += 1;
+            }
+        }
+        let correct_in_column_sum: usize = correct_in_column.iter().copied().map(usize::from).sum();
+        // TODO Note that this only works for ref alignments with core blocks where every seq
+        // is aligned in this position
+        if correct_in_column_sum == seq_cnt {
+            correct_column_count += 1;
+        }
+    }
+
+    let sum_of_pairs = dbg!(correctly_aligned) as f64 / true_site_pair_count(ref_alignment) as f64;
+    let column_score = correct_column_count as f64 / ref_alignment.core_block_columns() as f64;
+    AlignmentScores {
+        sum_of_pairs,
+        column_score,
     }
 }
 

@@ -1,4 +1,6 @@
 use crate::align::micro_alignment::Site;
+use anyhow::{Context, Result};
+use bio::io::fasta;
 use serde::export::Formatter;
 use std::fs::File;
 use std::io::Write;
@@ -40,6 +42,7 @@ pub enum MicroAlignmentCheck {
 }
 
 impl Alignment {
+    pub const GAP_CHARACTER: u8 = b'-';
     pub fn new(name: String, aligned_data: Vec<Sequence>, core_blocks: Vec<bool>) -> Self {
         let (unaligned_data, pos_mapping) = aligned_data
             .iter()
@@ -55,13 +58,43 @@ impl Alignment {
         }
     }
 
+    pub fn read_fasta(path: impl AsRef<Path>) -> Result<Self> {
+        let file = File::open(&path)?;
+        let reader = fasta::Reader::new(file);
+        let aligned_data: Result<Vec<_>> = reader
+            .records()
+            .map(|record| {
+                match record {
+                    Ok(record) => Ok(Sequence::new(
+                        record.id().to_string(),
+                        record.seq().to_vec(),
+                    )),
+                    Err(err) => Err(err.into()),
+                }
+                // record.map(|record| Sequence::new(record.id().to_string(), record.seq().to_vec()))
+            })
+            .collect();
+        let aligned_data = aligned_data.context("Reading record")?;
+        let name = path
+            .as_ref()
+            .file_stem()
+            .context("No filestem for fasta file")?
+            .to_string_lossy()
+            .into_owned();
+        let alig_len = aligned_data.first().context("Empty alignment")?.data.len();
+        let core_blocks = vec![true; alig_len];
+
+        Ok(Self::new(name, aligned_data, core_blocks))
+    }
+
     pub fn pos_aligned(&self, pos1: Site, pos2: Site) -> PositionAlignment {
         let pos_mapping = &self.unaligned_to_aligned_pos;
         let mapped_1 = pos_mapping[pos1.seq][pos1.pos];
         let mapped_2 = pos_mapping[pos2.seq][pos2.pos];
         if mapped_1 == mapped_2 && self.core_blocks[mapped_1] {
             PositionAlignment::Correct
-        } else if mapped_1 != mapped_2 {
+        } else if mapped_1 != mapped_2 && (self.core_blocks[mapped_1] || self.core_blocks[mapped_2])
+        {
             PositionAlignment::Incorrect
         } else {
             // mapped to position is not part of core block region
@@ -74,6 +107,10 @@ impl Alignment {
             .iter()
             .map(|seq| seq.select_core_blocks(&self.core_blocks))
             .collect()
+    }
+
+    pub fn core_block_columns(&self) -> usize {
+        self.core_blocks.iter().copied().map(usize::from).sum()
     }
 }
 
@@ -89,7 +126,7 @@ impl Sequence {
             .data
             .into_iter()
             .enumerate()
-            .filter(|(_, el)| *el != b'-')
+            .filter(|(_, el)| *el != Alignment::GAP_CHARACTER)
             .unzip();
         let unaligned_sequence = Self {
             name: self.name,

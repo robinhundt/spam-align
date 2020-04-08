@@ -50,14 +50,14 @@ impl EqClasses {
     pub fn align_sequences(&self, seqs: &mut [Sequence]) {
         let mut classes = self.classes.clone();
         classes.reverse();
+        let mut shifted_by: FxHashMap<usize, usize> = FxHashMap::default();
         while let Some(class) = classes.pop() {
             let max_pos = class
                 .iter()
                 .max_by_key(|site| site.pos)
                 .expect("Unexpected empty eq class")
                 .pos;
-            let mut shifted_by: FxHashMap<usize, usize> = FxHashMap::default();
-            shifted_by.reserve(class.len());
+            shifted_by.clear();
             //            println!("Handling class {:?}", class);
             for site in &class {
                 seqs[site.seq].data[site.pos].make_ascii_uppercase();
