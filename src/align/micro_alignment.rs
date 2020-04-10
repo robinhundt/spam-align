@@ -1,5 +1,5 @@
 use crate::spaced_word::{MatchWord, Pattern};
-use crate::Sequences;
+use crate::{Sequence};
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -102,7 +102,7 @@ pub struct Match {
 
 pub fn compute_multi_dim_micro_alignment_information(
     patterns: &[Pattern],
-    sequences: &Sequences,
+    sequences: &[Sequence],
     //    score_fn: fn(&[&[u8]]) -> i32,
 ) -> FxHashMap<usize, usize> {
     let max_seq_len = sequences
@@ -140,7 +140,7 @@ pub fn compute_multi_dim_micro_alignment_information(
 
 pub fn construct_micro_alignments_from_patterns<'a>(
     patterns: &'a [Pattern],
-    sequences: &'a Sequences,
+    sequences: &'a [Sequence],
     score_fn: fn(&[&[u8]]) -> i32,
     one_to_one_mapping: bool,
     //    max_n: Option<usize>,
@@ -186,7 +186,7 @@ pub fn construct_micro_alignments_from_patterns<'a>(
 
 fn generate_sorted_matches(
     pattern: &Pattern,
-    sequences: &Sequences,
+    sequences: &[Sequence],
     max_seq_len: usize,
 ) -> Vec<Match> {
     let mut pattern_matches: Vec<Match> = Vec::with_capacity(max_seq_len * sequences.len());
@@ -253,12 +253,13 @@ fn generate_combinations(match_group: SmallVec<[Match; 8]>) -> impl Iterator<Ite
 fn score_match_combination(
     score_fn: fn(&[&[u8]]) -> i32,
     combination: Vec<Match>,
-    sequences: &Sequences,
+    sequences: &[Sequence],
     pattern: &Pattern,
 ) -> ScoredMicroAlignment {
     let msa: SmallVec<[&[u8]; 15]> =
         SmallVec::from_iter(combination.iter().map(|pattern_match| {
-            sequences.get_site_slice(pattern_match.start_site, pattern.len())
+            let start_site = pattern_match.start_site;
+            &sequences[start_site.seq].data[start_site.pos .. start_site.pos + pattern.len()]
         }));
     let msa_score = score_fn(&msa[..]);
     let start_sites: SmallVec<[Site; 15]> = SmallVec::from_iter(

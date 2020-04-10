@@ -4,11 +4,11 @@ use crate::align::micro_alignment::{
 };
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
-use crate::Sequences;
 use indicatif::{ProgressBar, ProgressIterator};
 use itertools::Itertools;
 use std::ops::{Index, IndexMut};
 use std::time::Instant;
+use crate::Sequence;
 
 pub mod eq_class;
 pub mod gabios;
@@ -20,7 +20,7 @@ pub enum Align {
 }
 
 pub fn align(
-    sequences: &Sequences,
+    sequences: &[Sequence],
     patterns: &[Pattern],
     progress: Align,
 ) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {

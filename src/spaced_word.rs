@@ -7,7 +7,7 @@ use fxhash::{hash, FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rand::prelude::*;
 
-use crate::data_loaders::Sequence;
+use crate::Sequence;
 use crate::score::score_prot_pairwise;
 use std::fs::File;
 use std::io::Read;
@@ -80,6 +80,8 @@ impl Pattern {
     pub fn weight(&self) -> usize {
         self.weight
     }
+
+    pub fn dont_care(&self) -> usize {self.len() - self.weight }
 
     pub fn positions(&self) -> &[Position] {
         &self.positions
