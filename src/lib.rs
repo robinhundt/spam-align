@@ -8,7 +8,7 @@ pub mod spaced_word;
 use crate::align::micro_alignment::Site;
 use anyhow::{Context, Result};
 use bio::io::fasta;
-use serde::export::Formatter;
+use std::fmt::Formatter;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;

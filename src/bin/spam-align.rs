@@ -22,6 +22,7 @@ struct Opt {
     pattern_set_path: PathBuf,
     #[structopt(short = "o", long, name = "OUT", parse(from_os_str))]
     out_file: PathBuf,
+    /// Show progress information
     #[structopt(short = "p", parse(from_flag))]
     show_progrss: AlignProgress,
 }
