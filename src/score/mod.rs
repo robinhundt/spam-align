@@ -14,13 +14,11 @@ pub fn blosum62(a: u8, b: u8) -> i32 {
 }
 
 pub fn score_prot_msa(msa: &[&[u8]]) -> i32 {
-    let sum_score = msa
-        .into_iter()
+    msa.iter()
         .tuple_combinations::<(_, _)>()
         .fold(0, |acc, (seq_1, seq_2)| {
             acc + score_prot_pairwise(&seq_1, &seq_2)
-        });
-    sum_score
+        })
 }
 
 pub fn score_prot_pairwise(seq_1: &[u8], seq_2: &[u8]) -> i32 {

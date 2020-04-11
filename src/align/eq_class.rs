@@ -1,12 +1,12 @@
 use crate::align::gabios::Closure as TransitiveClosure;
-use crate::align::micro_alignment::{ScoredMicroAlignment, Site};
+use crate::align::micro_alignment::Site;
 use crate::Sequence;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::{repeat_n, Itertools};
 use petgraph::algo::toposort;
 use petgraph::Graph;
-use std::ops::{Deref, Not};
-use std::time::Instant;
+use std::ops::Deref;
+
 use std::vec::IntoIter;
 
 #[derive(Debug, Clone, Default)]
@@ -15,7 +15,7 @@ pub struct EqClasses {
 }
 
 impl EqClasses {
-    pub fn new(diagonals: &[ScoredMicroAlignment], closure: &TransitiveClosure) -> Self {
+    pub fn new(closure: &TransitiveClosure) -> Self {
         let classes = closure.eq_classes();
         let unsorted_self = Self { classes };
         unsorted_self.sort_self(closure)

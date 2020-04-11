@@ -7,22 +7,23 @@ use crate::spaced_word::Pattern;
 use indicatif::{ProgressBar, ProgressIterator};
 use itertools::Itertools;
 use std::ops::{Index, IndexMut};
-use std::time::Instant;
+
 use crate::Sequence;
 
 pub mod eq_class;
 pub mod gabios;
 pub mod micro_alignment;
 
-pub enum Align {
-    ShowProgress,
-    HideProgress,
+#[derive(Debug)]
+pub enum AlignProgress {
+    Show,
+    Hide,
 }
 
 pub fn align(
     sequences: &[Sequence],
     patterns: &[Pattern],
-    progress: Align,
+    progress: AlignProgress,
 ) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {
     let diagonals =
         construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
@@ -37,19 +38,15 @@ pub fn align(
     let mut added_diagonals: Box<dyn Iterator<Item = ScoredMicroAlignment>> =
         Box::new(diagonals.into_iter());
 
-    if let Align::ShowProgress = progress {
+    if let AlignProgress::Show = progress {
         let progress_bar = ProgressBar::new(num_diagonals as u64);
         progress_bar.set_draw_delta(num_diagonals as u64 / 100);
         added_diagonals = Box::new(added_diagonals.progress_with(progress_bar));
     }
 
     let added_diagonals = added_diagonals
-        .filter_map(|mut scored_diag| {
-            if transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment) {
-                Some(scored_diag)
-            } else {
-                None
-            }
+        .filter(|scored_diag| {
+            transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment)
         })
         .collect_vec();
 
@@ -111,11 +108,18 @@ impl<E> IndexMut<[usize; 2]> for Matrix<E> {
     }
 }
 
+impl From<bool> for AlignProgress {
+    fn from(flag: bool) -> Self {
+        if flag {
+            AlignProgress::Show
+        } else {
+            AlignProgress::Hide
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::data_loaders::balibase;
-    use crate::spaced_word::read_patterns_from_file;
 
     #[test]
     fn test_align() {

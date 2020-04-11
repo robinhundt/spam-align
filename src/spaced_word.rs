@@ -7,8 +7,9 @@ use fxhash::{hash, FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rand::prelude::*;
 
-use crate::Sequence;
 use crate::score::score_prot_pairwise;
+use crate::Sequence;
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::Read;
 use std::ops::Not;
@@ -37,9 +38,11 @@ impl TryFrom<&u8> for Position {
         let converted = match value {
             0 => Position::DontCare,
             1 => Position::Match,
-            _ => Err(anyhow!(
-                "Invalid token in provided pattern, only 0 and 1 allowed"
-            ))?,
+            _ => {
+                return Err(anyhow!(
+                    "Invalid token in provided pattern, only 0 and 1 allowed"
+                ))
+            }
         };
         Ok(converted)
     }
@@ -67,12 +70,12 @@ impl Pattern {
             .filter(|&&pos| pos == Position::Match)
             .count();
         if weight > Self::MAX_WEIGHT {
-            Err(anyhow!(
+            return Err(anyhow!(
                 "Pattern max weight is {}, but pattern \"{:#?}\" has weight: {}",
                 Self::MAX_WEIGHT,
                 binary_pattern,
                 weight,
-            ))?;
+            ));
         }
         Ok(Pattern { weight, positions })
     }
@@ -81,7 +84,9 @@ impl Pattern {
         self.weight
     }
 
-    pub fn dont_care(&self) -> usize {self.len() - self.weight }
+    pub fn dont_care(&self) -> usize {
+        self.len() - self.weight
+    }
 
     pub fn positions(&self) -> &[Position] {
         &self.positions
@@ -94,7 +99,7 @@ impl Pattern {
     /// returns the spaced word and the word of the don't care positions
     pub fn _match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word)> {
         if seq_slice.len() < self.len() {
-            Err(anyhow!("Slice must be longer than pattern"))?;
+            return Err(anyhow!("Slice must be longer than pattern"));
         }
 
         Ok(self.positions().iter().zip(seq_slice.iter()).fold(
@@ -155,8 +160,8 @@ pub fn read_patterns_from_file(path: impl AsRef<Path>) -> Result<Vec<Pattern>> {
     let mut file = File::open(path)?;
     let mut buf = String::new();
     file.read_to_string(&mut buf)?;
-    buf.split("\n")
-        .filter(|s| s.len() != 0 && s.trim_start().starts_with("#").not())
+    buf.split('\n')
+        .filter(|s| !s.is_empty() && s.trim_start().starts_with('#').not())
         .map(|s| s.parse())
         .collect()
 }
@@ -173,7 +178,7 @@ impl From<[u8; 12]> for MatchWord {
 
         for (count, protein) in arr.iter().enumerate() {
             let encoded = encode_protein_u8(*protein);
-            res |= (encoded as u64) << count * 5;
+            res |= (encoded as u64) << (count * 5);
         }
         MatchWord(res)
     }
@@ -183,14 +188,14 @@ impl From<MatchWord> for [u8; 12] {
     fn from(word: MatchWord) -> Self {
         let a = word.0;
         let mut res = [std::u8::MAX; 12];
-        for count in 0..12 {
-            let mask = 0b11111_u64 << count * 5;
-            let mut encoded = (a & mask) >> count * 5;
+        for (count, item) in res.iter_mut().enumerate() {
+            let mask = 0b11111_u64 << (count * 5);
+            let mut encoded = (a & mask) >> (count * 5);
             if encoded == 0b11111_u64 {
                 encoded = std::u8::MAX as u64;
             }
             let decoded = decode_protein_u64(encoded);
-            res[count] = decoded;
+            *item = decoded;
         }
         res
     }
@@ -241,7 +246,7 @@ pub fn generate_random_patterns(
     if min_len < max_weight {
         panic!("min_len: {} is less than max_weight: {}", min_len, max_len);
     }
-    let mut rng = StdRng::seed_from_u64(13546515);
+    let mut rng = StdRng::seed_from_u64(13_546_515);
     (0..count)
         .map(|_| {
             let len = rng.gen_range(min_len, max_len + 1);
@@ -255,9 +260,12 @@ pub fn generate_random_patterns(
             Pattern {
                 weight,
                 positions: (0..len)
-                    .map(|pos| match match_positions.contains(&pos) {
-                        true => Position::Match,
-                        false => Position::DontCare,
+                    .map(|pos| {
+                        if match_positions.contains(&pos) {
+                            Position::Match
+                        } else {
+                            Position::DontCare
+                        }
                     })
                     .collect(),
             }
@@ -301,12 +309,16 @@ fn best_match(spaced_words: Vec<SpacedWord>) -> Option<SpacedWordMatch> {
         .filter(|(word1, word2)| word1.seq != word2.seq)
         .fold((vec![], std::i32::MIN), |mut acc, (word1, word2)| {
             let score = score_prot_pairwise(&word1.dont_care_word, &word2.dont_care_word);
-            if score > acc.1 {
-                acc.0.clear();
-                acc.0.push((word1, word2));
-                acc.1 = score;
-            } else if score == acc.1 {
-                acc.0.push((word1, word2));
+            match score.cmp(&acc.1) {
+                Ordering::Greater => {
+                    acc.0.clear();
+                    acc.0.push((word1, word2));
+                    acc.1 = score;
+                }
+                Ordering::Equal => {
+                    acc.0.push((word1, word2));
+                }
+                Ordering::Less => (),
             }
             acc
         })
@@ -331,23 +343,20 @@ pub fn find_word_match_buckets(
 ) -> FxHashMap<Word, Vec<SpacedWord>> {
     let mut spaced_words_in_seqs: FxHashMap<Word, Vec<SpacedWord>> = FxHashMap::default();
 
-    let spaced_word_iter = sequences
-        .into_iter()
-        .enumerate()
-        .flat_map(|(seq_idx, seq)| {
-            word_matches_in_single_sequence(pattern, &seq.data).map(
-                move |(match_word, dont_care_word, pos)| {
-                    (
-                        match_word,
-                        SpacedWord {
-                            seq: seq_idx,
-                            pos_in_seq: pos,
-                            dont_care_word,
-                        },
-                    )
-                },
-            )
-        });
+    let spaced_word_iter = sequences.iter().enumerate().flat_map(|(seq_idx, seq)| {
+        word_matches_in_single_sequence(pattern, &seq.data).map(
+            move |(match_word, dont_care_word, pos)| {
+                (
+                    match_word,
+                    SpacedWord {
+                        seq: seq_idx,
+                        pos_in_seq: pos,
+                        dont_care_word,
+                    },
+                )
+            },
+        )
+    });
     for (match_slice, seq_pos) in spaced_word_iter {
         if let Some(word_matches) = spaced_words_in_seqs.get_mut(&match_slice) {
             word_matches.push(seq_pos);
@@ -379,7 +388,6 @@ fn word_matches_in_single_sequence<'b, 'a: 'b>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::size_of;
 
     #[test]
     fn test_generate_random_patterns() {

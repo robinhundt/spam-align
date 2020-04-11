@@ -1,15 +1,10 @@
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::align::Matrix;
-use itertools::{max, Itertools};
-use std::cmp::min;
-use std::mem;
-use std::mem::swap;
+
 use std::ops::Not;
-use std::time::Instant;
 
 pub struct Closure {
     sequences: Vec<Sequence>,
-    max_length: usize,
     alig_set: Vec<PositionSet>,
 
     nbr_alig_sets: usize,
@@ -62,9 +57,9 @@ impl From<ShiftedSite> for Site {
 }
 
 impl Closure {
-    pub fn new(long_seq: &[usize]) -> Self {
-        let &max_length = long_seq.iter().max().expect("No sequences");
-        let sequences = Closure::init_sequences(long_seq);
+    pub fn new(seq_lengths: &[usize]) -> Self {
+        let &max_length = seq_lengths.iter().max().expect("No sequences");
+        let sequences = Closure::init_sequences(seq_lengths);
         let nbr_seqs = sequences.len();
 
         let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
@@ -76,24 +71,23 @@ impl Closure {
             max_length + 2
         ];
 
-        let gauche1 = vec![0; nbr_seqs];
-        let gauche2 = vec![0; nbr_seqs];
-        let droite1 = vec![0; nbr_seqs];
-        let droite2 = vec![0; nbr_seqs];
+        let left1 = vec![0; nbr_seqs];
+        let left2 = vec![0; nbr_seqs];
+        let right1 = vec![0; nbr_seqs];
+        let right2 = vec![0; nbr_seqs];
 
         let pos = Matrix::zeros([nbr_seqs, nbr_seqs]);
         Self {
-            max_length,
             sequences,
             pred_frontier,
             succ_frontier,
             alig_set,
-            left1: gauche1,
+            left1,
             nbr_alig_sets: 0,
             old_nbr_alig_sets: 0,
-            left2: gauche2,
-            right1: droite1,
-            right2: droite2,
+            left2,
+            right1,
+            right2,
             pos,
         }
     }
@@ -101,8 +95,7 @@ impl Closure {
     fn init_sequences(long_seq: &[usize]) -> Vec<Sequence> {
         long_seq
             .iter()
-            .enumerate()
-            .map(|(id, len)| {
+            .map(|len| {
                 let padded_len = len + 2;
                 Sequence {
                     length: *len,
@@ -131,7 +124,7 @@ impl Closure {
             self.add_aligned_positions(a, b);
             added = true;
         }
-        return added;
+        added
     }
 
     pub fn aligned(&self, a: Site, b: Site) -> bool {
@@ -322,10 +315,8 @@ impl Closure {
             self.alig_set[nn].pos[x] = 0;
             if n1 > 0 && self.alig_set[n1].pos[x] > 0 {
                 self.alig_set[nn].pos[x] = self.alig_set[n1].pos[x];
-            } else {
-                if n2 > 0 && self.alig_set[n2].pos[x] > 0 {
-                    self.alig_set[nn].pos[x] = self.alig_set[n2].pos[x];
-                }
+            } else if n2 > 0 && self.alig_set[n2].pos[x] > 0 {
+                self.alig_set[nn].pos[x] = self.alig_set[n2].pos[x];
             }
 
             if self.alig_set[nn].pos[x] == 0 {
@@ -480,17 +471,15 @@ impl Closure {
         if n2 == 0 {
             self.nbr_alig_sets += 1;
             self.realloc();
+        } else if n1 == 0 {
+            self.move_alig_set(n2, nn)
         } else {
-            if n1 == 0 {
-                self.move_alig_set(n2, nn)
-            } else {
-                self.move_alig_set(n1, nn);
-                if n2 < self.nbr_alig_sets {
-                    self.move_alig_set(n2, self.nbr_alig_sets)
-                }
-                self.nbr_alig_sets -= 1;
-                self.realloc();
+            self.move_alig_set(n1, nn);
+            if n2 < self.nbr_alig_sets {
+                self.move_alig_set(n2, self.nbr_alig_sets)
             }
+            self.nbr_alig_sets -= 1;
+            self.realloc();
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::spaced_word::{MatchWord, Pattern};
-use crate::{Sequence};
+use crate::Sequence;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -256,11 +256,10 @@ fn score_match_combination(
     sequences: &[Sequence],
     pattern: &Pattern,
 ) -> ScoredMicroAlignment {
-    let msa: SmallVec<[&[u8]; 15]> =
-        SmallVec::from_iter(combination.iter().map(|pattern_match| {
-            let start_site = pattern_match.start_site;
-            &sequences[start_site.seq].data[start_site.pos .. start_site.pos + pattern.len()]
-        }));
+    let msa: SmallVec<[&[u8]; 15]> = SmallVec::from_iter(combination.iter().map(|pattern_match| {
+        let start_site = pattern_match.start_site;
+        &sequences[start_site.seq].data[start_site.pos..start_site.pos + pattern.len()]
+    }));
     let msa_score = score_fn(&msa[..]);
     let start_sites: SmallVec<[Site; 15]> = SmallVec::from_iter(
         combination
@@ -320,9 +319,7 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_loaders::balibase::parse_xml_file;
-    use crate::score::score_prot_msa;
-    use crate::spaced_word::read_patterns_from_file;
+
     use std::error::Error;
 
     #[test]

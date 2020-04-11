@@ -15,7 +15,6 @@ use std::path::Path;
 use std::str;
 use std::{fmt, io};
 
-
 #[derive(Clone, Debug)]
 pub struct Alignment {
     pub name: String,
@@ -129,6 +128,10 @@ impl Sequence {
         self.data.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     /// Returns new Sequence with stripped gaps und Vec that matches each unaligned position to
     /// it's original aligned position
     fn into_unaligned(self) -> (Self, Vec<usize>) {
@@ -191,6 +194,6 @@ pub fn format_as_fasta(seqs: &[Sequence]) -> String {
 pub fn write_as_fasta(path: impl AsRef<Path>, seqs: &[Sequence]) -> io::Result<()> {
     let mut file = File::create(path)?;
     let formatted = format_as_fasta(seqs);
-    file.write(formatted.as_bytes())?;
+    file.write_all(formatted.as_bytes())?;
     Ok(())
 }
