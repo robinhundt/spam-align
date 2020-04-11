@@ -31,6 +31,7 @@ pub fn score_prot_pairwise(seq_1: &[u8], seq_2: &[u8]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_blosum62() {
         let score1 = blosum62(b'a', b'A');

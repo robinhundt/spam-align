@@ -1,11 +1,13 @@
-use crate::spaced_word::{MatchWord, Pattern};
-use crate::Sequence;
+use std::collections::BTreeSet;
+use std::iter::FromIterator;
+
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use rayon::prelude::*;
 use smallvec::SmallVec;
-use std::collections::BTreeSet;
-use std::iter::FromIterator;
+
+use crate::Sequence;
+use crate::spaced_word::{MatchWord, Pattern};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Represents a multidimensional diagonal over n sequences
@@ -318,9 +320,9 @@ fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<Score
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::error::Error;
+
+    use super::*;
 
     #[test]
     fn test_construct_micro_alignments_from_patterns() -> Result<(), Box<dyn Error>> {

@@ -1,19 +1,19 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::convert::TryFrom;
+use std::fs::File;
+use std::io::Read;
+use std::ops::Not;
+use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Error, Result};
-use fxhash::{hash, FxHashMap, FxHashSet};
+use fxhash::{FxHashMap, FxHashSet, hash};
 use itertools::Itertools;
 use rand::prelude::*;
 
 use crate::score::score_prot_pairwise;
 use crate::Sequence;
-use std::cmp::Ordering;
-use std::fs::File;
-use std::io::Read;
-use std::ops::Not;
-use std::path::Path;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
 pub enum Position {

@@ -1,19 +1,21 @@
 #[macro_use]
 extern crate anyhow;
 
-pub mod align;
-pub mod score;
-pub mod spaced_word;
-
-use crate::align::micro_alignment::Site;
-use anyhow::{Context, Result};
-use bio::io::fasta;
+use std::{fmt, io};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::str;
-use std::{fmt, io};
+
+use anyhow::{Context, Result};
+use bio::io::fasta;
+
+use crate::align::micro_alignment::Site;
+
+pub mod align;
+pub mod score;
+pub mod spaced_word;
 
 #[derive(Clone, Debug)]
 pub struct Alignment {
@@ -196,4 +198,23 @@ pub fn write_as_fasta(path: impl AsRef<Path>, seqs: &[Sequence]) -> io::Result<(
     let formatted = format_as_fasta(seqs);
     file.write_all(formatted.as_bytes())?;
     Ok(())
+}
+
+pub fn read_fasta(path: impl AsRef<Path>) -> Result<Vec<Sequence>> {
+    let file = File::open(&path)?;
+    let reader = fasta::Reader::new(file);
+    let sequences: Result<Vec<_>> = reader
+        .records()
+        .map(|record| {
+            match record {
+                Ok(record) => Ok(Sequence::new(
+                    record.id().to_string(),
+                    record.seq().to_vec(),
+                )),
+                Err(err) => Err(err.into()),
+            }
+            // record.map(|record| Sequence::new(record.id().to_string(), record.seq().to_vec()))
+        })
+        .collect();
+    sequences.context("Reading record")
 }

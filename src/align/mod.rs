@@ -1,14 +1,16 @@
+use std::ops::{Index, IndexMut};
+
+use indicatif::{ProgressBar, ProgressIterator};
+use itertools::Itertools;
+
+use crate::align::eq_class::EqClasses;
 use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::{
     construct_micro_alignments_from_patterns, ScoredMicroAlignment,
 };
 use crate::score::score_prot_msa;
-use crate::spaced_word::Pattern;
-use indicatif::{ProgressBar, ProgressIterator};
-use itertools::Itertools;
-use std::ops::{Index, IndexMut};
-
 use crate::Sequence;
+use crate::spaced_word::Pattern;
 
 pub mod eq_class;
 pub mod gabios;
@@ -20,37 +22,31 @@ pub enum AlignProgress {
     Hide,
 }
 
-pub fn align(
-    sequences: &[Sequence],
-    patterns: &[Pattern],
-    progress: AlignProgress,
-) -> (Vec<ScoredMicroAlignment>, TransitiveClosure) {
+pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignProgress) {
     let diagonals =
         construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
     let mut diagonals = diagonals.collect_vec();
     diagonals.sort_by_cached_key(|diag| -diag.score);
 
-    // println!("Found {} diagonals", diagonals.len());
     let seq_lengths = sequences.iter().map(|seq| seq.len()).collect_vec();
 
     let mut transitive_closure = TransitiveClosure::new(&seq_lengths);
     let num_diagonals = diagonals.len();
-    let mut added_diagonals: Box<dyn Iterator<Item = ScoredMicroAlignment>> =
+    let mut diagonals: Box<dyn Iterator<Item = ScoredMicroAlignment>> =
         Box::new(diagonals.into_iter());
 
     if let AlignProgress::Show = progress {
         let progress_bar = ProgressBar::new(num_diagonals as u64);
         progress_bar.set_draw_delta(num_diagonals as u64 / 100);
-        added_diagonals = Box::new(added_diagonals.progress_with(progress_bar));
+        diagonals = Box::new(diagonals.progress_with(progress_bar));
     }
 
-    let added_diagonals = added_diagonals
-        .filter(|scored_diag| {
-            transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment)
-        })
-        .collect_vec();
+    diagonals.for_each(|scored_diag| {
+        transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment);
+    });
 
-    (added_diagonals, transitive_closure)
+    let eq_classes = EqClasses::new(&transitive_closure);
+    eq_classes.align_sequences(sequences);
 }
 
 #[derive(Default)]

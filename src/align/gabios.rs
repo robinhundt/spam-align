@@ -1,7 +1,7 @@
-use crate::align::micro_alignment::{MicroAlignment, Site};
-use crate::align::Matrix;
-
 use std::ops::Not;
+
+use crate::align::Matrix;
+use crate::align::micro_alignment::{MicroAlignment, Site};
 
 pub struct Closure {
     sequences: Vec<Sequence>,
@@ -186,38 +186,6 @@ impl Closure {
         }
         classes
     }
-
-    // fn pred_frontier(&self, origin_site: ShiftedSite, target_seq: usize) -> usize {
-    //     let s = origin_site.0;
-    //     let mut n = self.sequences[s.seq].alig_set_nbr[s.pos];
-    //     if n == 0 {
-    //         let k = self.sequences[s.seq].pred_alig_set_pos[s.pos];
-    //         if k > 0 {
-    //             n = self.sequences[s.seq].alig_set_nbr[k];
-    //         }
-    //     }
-    //     if n > 0 {
-    //         self.pred_frontier[[n, target_seq]]
-    //     } else {
-    //         0
-    //     }
-    // }
-    //
-    // fn succ_frontier(&self, origin_site: ShiftedSite, target_seq: usize) -> usize {
-    //     let s = origin_site.0;
-    //     let mut n = self.sequences[s.seq].alig_set_nbr[s.pos];
-    //     if n == 0 {
-    //         let k = self.sequences[s.seq].succ_alig_set_pos[s.pos];
-    //         if k > 0 {
-    //             n = self.sequences[s.seq].alig_set_nbr[k];
-    //         }
-    //     }
-    //     if n > 0 {
-    //         self.succ_frontier[[n, target_seq]]
-    //     } else {
-    //         self.sequences[target_seq].len() + 1
-    //     }
-    // }
 
     fn add_aligned_positions(&mut self, a: ShiftedSite, b: ShiftedSite) {
         let (a, b) = (a.0, b.0);

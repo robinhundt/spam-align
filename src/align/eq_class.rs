@@ -1,13 +1,14 @@
+use std::ops::Deref;
+use std::vec::IntoIter;
+
+use fxhash::FxHashMap;
+use itertools::{Itertools, repeat_n};
+use petgraph::algo::toposort;
+use petgraph::Graph;
+
 use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::Site;
 use crate::Sequence;
-use fxhash::FxHashMap;
-use itertools::{repeat_n, Itertools};
-use petgraph::algo::toposort;
-use petgraph::Graph;
-use std::ops::Deref;
-
-use std::vec::IntoIter;
 
 #[derive(Debug, Clone, Default)]
 pub struct EqClasses {
