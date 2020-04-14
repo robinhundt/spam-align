@@ -26,7 +26,7 @@ pub struct Alignment {
     pub core_blocks: Vec<bool>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Sequence {
     pub name: String,
     pub data: Vec<u8>,

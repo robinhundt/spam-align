@@ -3,7 +3,6 @@ use std::ops::{Index, IndexMut};
 use indicatif::{ProgressBar, ProgressIterator};
 use itertools::Itertools;
 
-use crate::align::eq_class::EqClasses;
 use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::{
     construct_micro_alignments_from_patterns, ScoredMicroAlignment,
@@ -12,7 +11,6 @@ use crate::score::score_prot_msa;
 use crate::Sequence;
 use crate::spaced_word::Pattern;
 
-pub mod eq_class;
 pub mod gabios;
 pub mod micro_alignment;
 
@@ -45,8 +43,7 @@ pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignPr
         transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment);
     });
 
-    let eq_classes = EqClasses::new(&transitive_closure);
-    eq_classes.align_sequences(sequences);
+    transitive_closure.align(sequences);
 }
 
 #[derive(Default)]
