@@ -8,8 +8,8 @@ use crate::align::micro_alignment::{
     construct_micro_alignments_from_patterns, ScoredMicroAlignment,
 };
 use crate::score::score_prot_msa;
-use crate::Sequence;
 use crate::spaced_word::Pattern;
+use crate::Sequence;
 
 pub mod gabios;
 pub mod micro_alignment;

@@ -5,9 +5,9 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use spam_align::{read_fasta, Sequence, write_as_fasta};
 use spam_align::align::{align, AlignProgress};
 use spam_align::spaced_word::read_patterns_from_file;
+use spam_align::{read_fasta, write_as_fasta, Sequence};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -20,14 +20,14 @@ struct Opt {
     out_file: PathBuf,
     /// Show progress information
     #[structopt(short = "p", parse(from_flag))]
-    show_progrss: AlignProgress,
+    show_progress: AlignProgress,
 }
 
 fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
     let mut sequences = load_sequences(opt.in_file)?;
     let patterns = read_patterns_from_file(opt.pattern_set_path)?;
-    align(&mut sequences, &patterns, AlignProgress::Show);
+    align(&mut sequences, &patterns, opt.show_progress);
     write_as_fasta(opt.out_file, &sequences)?;
     Ok(())
 }
