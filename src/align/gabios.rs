@@ -1,11 +1,10 @@
-use std::ops::{Not, Deref};
+use std::ops::{Deref, Not};
 
-use crate::align::Matrix;
-use crate::align::micro_alignment::{MicroAlignment, Site};
 use itertools::{repeat_n, Itertools};
-use fxhash::FxHashMap;
-use petgraph::{Graph, algo::toposort};
+use petgraph::{algo::toposort, Graph};
 
+use crate::align::micro_alignment::{MicroAlignment, Site};
+use crate::align::Matrix;
 
 pub struct Closure {
     /// information about the positions in the aligned sequences
@@ -13,7 +12,7 @@ pub struct Closure {
     /// this stores information about which eq class is aligned with which
     /// positions for each sequence
     /// is used to tell if a eq class is aligned with a seq (not aligned if val == 0)
-    alig_set: Vec<PositionSet>,
+    alig_set: Matrix<usize>,
 
     /// how many eq classes are there in the current iteration
     nbr_alig_sets: usize,
@@ -28,7 +27,8 @@ pub struct Closure {
     succ_frontier: Matrix<usize>,
 
     /// these might be used to as buffers storing frontiers
-    /// which are potentially change by adding the current positions
+    /// which are potentially changed by adding the current positions
+    /// to the alignment
     left1: Vec<usize>,
     left2: Vec<usize>,
     right1: Vec<usize>,
@@ -61,7 +61,6 @@ struct PositionSet {
     pos: Vec<usize>,
 }
 
-
 /// Wrapper for a site whose position is increased by 1
 /// since the algorithm operates in sequences with `1` being the first position
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
@@ -89,12 +88,7 @@ impl Closure {
 
         let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
         let succ_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
-        let alig_set = vec![
-            PositionSet {
-                pos: vec![0; nbr_seqs]
-            };
-            max_length + 2
-        ];
+        let alig_set = Matrix::zeros([max_length + 2, nbr_seqs]);
 
         let left1 = vec![0; nbr_seqs];
         let left2 = vec![0; nbr_seqs];
@@ -155,7 +149,6 @@ impl Closure {
         added
     }
 
-
     fn aligned(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
         let (a, b) = (a.0, b.0);
         a.seq == b.seq && a.pos == b.pos
@@ -196,7 +189,10 @@ impl Closure {
         }
     }
 
-    pub fn align(&self, seqs: &mut [crate::Sequence])  {
+    /// Uses the current closure to align the passed sequences
+    pub fn align(&self, seqs: &mut [crate::Sequence]) {
+        // Gather a vec of vec of sites, where each Vec<Site> represents
+        // an equivalency class of aligned sites
         let mut classes = vec![vec![]; self.nbr_alig_sets];
         for (idx, seq) in self.sequences.iter().enumerate() {
             for (pos, alig_set) in seq.alig_set_nbr.iter().enumerate().skip(1) {
@@ -208,6 +204,9 @@ impl Closure {
                 classes[alig_set].push(site);
             }
         }
+
+        // Add these eq classes into a graph with edges from eq class a
+        // to b iff a < b as defined by the self.less method
 
         let mut graph = Graph::<&Vec<Site>, ()>::with_capacity(classes.len(), 0);
         let mut node_indices = vec![];
@@ -225,6 +224,9 @@ impl Closure {
                 }
             }
         }
+
+        // perform a topological sort of the indices of the graph and collect
+        // in sorted order the node weights representing eq classes into a vector
         let sorted_indices = toposort(&graph, None).unwrap();
         let sorted_classes = sorted_indices
             .into_iter()
@@ -232,16 +234,20 @@ impl Closure {
             .collect_vec();
         let mut classes = sorted_classes;
 
+        // This handles the actual gap insertion by iterating the eq classes
+        // from smallest (meaning the left most) to highest,
+        // inserting gaps such that all the positions of the class are in the
+        // same column in the output. The remaining classes are shifted to
+        // the right correspondingly
         classes.reverse();
-        let mut shifted_by: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut shifted_by = vec![0; self.sequences.len()];
         while let Some(class) = classes.pop() {
             let max_pos = class
                 .iter()
                 .max_by_key(|site| site.pos)
                 .expect("Unexpected empty eq class")
                 .pos;
-            shifted_by.clear();
-            //            println!("Handling class {:?}", class);
+            shifted_by.iter_mut().for_each(|el| *el = 0);
             for site in &class {
                 seqs[site.seq].data[site.pos].make_ascii_uppercase();
                 let shift = max_pos - site.pos;
@@ -251,17 +257,11 @@ impl Closure {
                 seqs[site.seq]
                     .data
                     .splice(site.pos..site.pos, repeat_n(b'-', shift));
-                shifted_by.insert(site.seq, shift);
+                shifted_by[site.seq] = shift;
             }
             classes.iter_mut().for_each(|shifted_class| {
                 shifted_class.iter_mut().for_each(|mut site| {
-                    match shifted_by.get(&site.seq) {
-                        Some(shift) => {
-                            site.pos += *shift;
-                            site
-                        }
-                        None => site,
-                    };
+                    site.pos += shifted_by[site.seq];
                 });
             });
         }
@@ -277,7 +277,6 @@ impl Closure {
             let missing_gaps = max_len - seq.data.len();
             seq.data.extend(repeat_n(b'-', missing_gaps));
         }
-
     }
 
     fn add_aligned_positions(&mut self, a: ShiftedSite, b: ShiftedSite) {
@@ -317,18 +316,19 @@ impl Closure {
                 left.iter_mut().for_each(|x| *x = 0);
             } else {
                 let pred_frontier = pred_frontier.row(ng);
-                left
-                    .iter_mut()
+                left.iter_mut()
                     .zip(pred_frontier)
                     .for_each(|(g1, pred)| *g1 = *pred);
             }
-
         };
 
         init_left(ng1, &mut self.left1, &self.pred_frontier);
         init_left(ng2, &mut self.left2, &self.pred_frontier);
 
-        let init_right = |nd: usize, right: &mut [usize], sequences: &[Sequence], succ_frontier: &Matrix<usize>| {
+        let init_right = |nd: usize,
+                          right: &mut [usize],
+                          sequences: &[Sequence],
+                          succ_frontier: &Matrix<usize>| {
             if nd == 0 {
                 right
                     .iter_mut()
@@ -341,12 +341,10 @@ impl Closure {
                     .zip(succ_frontier)
                     .for_each(|(d1, succ)| *d1 = *succ);
             }
-
         };
 
         init_right(nd1, &mut self.right1, &self.sequences, &self.succ_frontier);
         init_right(nd2, &mut self.right2, &self.sequences, &self.succ_frontier);
-
 
         self.left1[a.seq] = a.pos;
         self.right1[a.seq] = a.pos;
@@ -356,32 +354,32 @@ impl Closure {
 
         let nn = self.nbr_alig_sets + 1;
         for x in 0..self.sequences.len() {
-            self.alig_set[nn].pos[x] = 0;
-            if n1 > 0 && self.alig_set[n1].pos[x] > 0 {
-                self.alig_set[nn].pos[x] = self.alig_set[n1].pos[x];
-            } else if n2 > 0 && self.alig_set[n2].pos[x] > 0 {
-                self.alig_set[nn].pos[x] = self.alig_set[n2].pos[x];
+            self.alig_set[[nn, x]] = 0;
+            if n1 > 0 && self.alig_set[[n1, x]] > 0 {
+                self.alig_set[[nn, x]] = self.alig_set[[n1, x]];
+            } else if n2 > 0 && self.alig_set[[n2, x]] > 0 {
+                self.alig_set[[nn, x]] = self.alig_set[[n2, x]];
             }
 
-            if self.alig_set[nn].pos[x] == 0 {
+            if self.alig_set[[nn, x]] == 0 {
                 self.pred_frontier[[nn, x]] = std::cmp::max(self.left1[x], self.left2[x]);
                 self.succ_frontier[[nn, x]] = std::cmp::min(self.right1[x], self.right2[x]);
             } else {
-                let front = self.alig_set[nn].pos[x];
+                let front = self.alig_set[[nn, x]];
                 self.pred_frontier[[nn, x]] = front;
                 self.succ_frontier[[nn, x]] = front;
             }
         }
         self.pred_frontier[[nn, a.seq]] = a.pos;
         self.succ_frontier[[nn, a.seq]] = a.pos;
-        self.alig_set[nn].pos[a.seq] = a.pos;
+        self.alig_set[[nn, a.seq]] = a.pos;
 
         self.pred_frontier[[nn, b.seq]] = b.pos;
         self.succ_frontier[[nn, b.seq]] = b.pos;
-        self.alig_set[nn].pos[b.seq] = b.pos;
+        self.alig_set[[nn, b.seq]] = b.pos;
 
         for x in 0..self.sequences.len() {
-            let k = self.alig_set[nn].pos[x];
+            let k = self.alig_set[[nn, x]];
             if k > 0 {
                 self.sequences[x].alig_set_nbr[k] = nn;
             }
@@ -396,7 +394,7 @@ impl Closure {
             for y in 0..self.sequences.len() {
                 self.pos[[x, y]] = 0;
                 let mut k = self.succ_frontier[[nn, x]];
-                if k == self.alig_set[nn].pos[x] {
+                if k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].succ_alig_set_pos[k];
                 }
                 if k <= self.sequences[x].len() {
@@ -419,7 +417,7 @@ impl Closure {
             }
             for y in 0..self.sequences.len() {
                 let mut k = self.succ_frontier[[nn, x]];
-                if k == self.alig_set[nn].pos[x] {
+                if k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].succ_alig_set_pos[k];
                 }
                 if self.pos[[x, y]] > 0 {
@@ -439,7 +437,7 @@ impl Closure {
             for y in 0..self.sequences.len() {
                 self.pos[[x, y]] = 0;
                 let mut k = self.pred_frontier[[nn, x]];
-                if k > 0 && k == self.alig_set[nn].pos[x] {
+                if k > 0 && k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].pred_alig_set_pos[k];
                 }
                 while k > 0 {
@@ -460,7 +458,7 @@ impl Closure {
             }
             for y in 0..self.sequences.len() {
                 let mut k = self.pred_frontier[[nn, x]];
-                if k > 0 && k == self.alig_set[nn].pos[x] {
+                if k > 0 && k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].pred_alig_set_pos[k];
                 }
                 if self.pos[[x, y]] > 0 {
@@ -488,7 +486,9 @@ impl Closure {
             }
 
             let mut k = site.pos + 1;
-            while k <= self.sequences[site.seq].len() && self.sequences[site.seq].alig_set_nbr[k] == 0 {
+            while k <= self.sequences[site.seq].len()
+                && self.sequences[site.seq].alig_set_nbr[k] == 0
+            {
                 self.sequences[site.seq].pred_alig_set_pos[k] = site.pos;
                 k += 1;
             }
@@ -519,8 +519,8 @@ impl Closure {
 
     fn move_alig_set(&mut self, n1: usize, n2: usize) {
         for x in 0..self.sequences.len() {
-            let k = self.alig_set[n2].pos[x];
-            self.alig_set[n1].pos[x] = k;
+            let k = self.alig_set[[n2, x]];
+            self.alig_set[[n1, x]] = k;
             if k > 0 {
                 self.sequences[x].alig_set_nbr[k] = n1;
             }
@@ -536,12 +536,7 @@ impl Closure {
         let new_rows = self.nbr_alig_sets + 2;
         self.pred_frontier.resize_rows(new_rows);
         self.succ_frontier.resize_rows(new_rows);
-        self.alig_set.resize(
-            self.nbr_alig_sets + 2,
-            PositionSet {
-                pos: vec![0; self.sequences.len()],
-            },
-        );
+        self.alig_set.resize_rows(new_rows);
         self.old_nbr_alig_sets = self.nbr_alig_sets;
     }
 }

@@ -1,8 +1,9 @@
 use anyhow::Result;
-use criterion::{criterion_group, criterion_main, Criterion};
 use spam_align::align::{align, AlignProgress};
 use spam_align::read_fasta;
 use spam_align::spaced_word::read_patterns_from_file;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 
 fn bench_align(c: &mut Criterion) {
     let input_12012 = read_fasta("benches/data/BB12012.tfa").expect("fasta file");
