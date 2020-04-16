@@ -1,12 +1,11 @@
 #[macro_use]
 extern crate anyhow;
-
-use std::{fmt, io};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::str;
+use std::{fmt, io};
 
 use anyhow::{Context, Result};
 use bio::io::fasta;

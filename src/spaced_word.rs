@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fs::File;
@@ -8,12 +7,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Error, Result};
-use fxhash::{FxHashMap, FxHashSet, hash};
-use itertools::Itertools;
+use fxhash::FxHashSet;
 use rand::prelude::*;
-
-use crate::score::score_prot_pairwise;
-use crate::Sequence;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
 pub enum Position {
@@ -94,27 +89,6 @@ impl Pattern {
 
     pub fn len(&self) -> usize {
         self.positions.len()
-    }
-
-    /// returns the spaced word and the word of the don't care positions
-    pub fn _match_slice(&self, seq_slice: &[u8]) -> Result<(Word, Word)> {
-        if seq_slice.len() < self.len() {
-            return Err(anyhow!("Slice must be longer than pattern"));
-        }
-
-        Ok(self.positions().iter().zip(seq_slice.iter()).fold(
-            (
-                Vec::with_capacity(self.weight()),
-                Vec::with_capacity(self.len() - self.weight()),
-            ),
-            |(mut match_vec, mut dont_care_vec), (pattern_pos, seq_pos)| {
-                match pattern_pos {
-                    Position::Match => match_vec.push(*seq_pos),
-                    Position::DontCare => dont_care_vec.push(*seq_pos),
-                };
-                (match_vec, dont_care_vec)
-            },
-        ))
     }
 
     pub fn match_slice(&self, seq_slice: &[u8]) -> MatchWord {
@@ -273,118 +247,6 @@ pub fn generate_random_patterns(
         .collect()
 }
 
-#[derive(Clone, Debug, Hash)]
-pub struct SpacedWord {
-    pub seq: usize,
-    pub pos_in_seq: usize,
-    pub dont_care_word: Word,
-}
-
-#[derive(Clone, Debug, Hash)]
-pub struct SpacedWordMatch {
-    pub fst_word: SpacedWord,
-    pub snd_word: SpacedWord,
-    pub score: i32,
-}
-
-//TODO provide a way to find matches for mutliple patterns at the same time,
-// should be much faster
-pub fn find_word_matches(
-    pattern: &Pattern,
-    sequences: &[Sequence],
-) -> impl Iterator<Item = SpacedWordMatch> {
-    let match_buckets = find_word_match_buckets(pattern, sequences);
-    match_buckets
-        .into_iter()
-        .map(|(_, spaced_words)| best_match(spaced_words))
-        .filter(Option::is_some)
-        .map(Option::unwrap)
-}
-
-// TODO evaluate if  this is really what is supposed to be happening
-fn best_match(spaced_words: Vec<SpacedWord>) -> Option<SpacedWordMatch> {
-    let spaced_word_match = spaced_words
-        .into_iter()
-        .tuple_combinations::<(SpacedWord, SpacedWord)>()
-        .filter(|(word1, word2)| word1.seq != word2.seq)
-        .fold((vec![], std::i32::MIN), |mut acc, (word1, word2)| {
-            let score = score_prot_pairwise(&word1.dont_care_word, &word2.dont_care_word);
-            match score.cmp(&acc.1) {
-                Ordering::Greater => {
-                    acc.0.clear();
-                    acc.0.push((word1, word2));
-                    acc.1 = score;
-                }
-                Ordering::Equal => {
-                    acc.0.push((word1, word2));
-                }
-                Ordering::Less => (),
-            }
-            acc
-        })
-        .0
-        .into_iter()
-        .max_by_key(|word_tuple| hash(word_tuple));
-
-    spaced_word_match.map(|(fst_word, snd_word)| {
-        let score = score_prot_pairwise(&fst_word.dont_care_word, &snd_word.dont_care_word);
-        SpacedWordMatch {
-            fst_word,
-            snd_word,
-            score,
-        }
-    })
-}
-//TODO provide a way to find matches for mutliple patterns at the same time,
-// should be much faster
-pub fn find_word_match_buckets(
-    pattern: &Pattern,
-    sequences: &[Sequence],
-) -> FxHashMap<Word, Vec<SpacedWord>> {
-    let mut spaced_words_in_seqs: FxHashMap<Word, Vec<SpacedWord>> = FxHashMap::default();
-
-    let spaced_word_iter = sequences.iter().enumerate().flat_map(|(seq_idx, seq)| {
-        word_matches_in_single_sequence(pattern, &seq.data).map(
-            move |(match_word, dont_care_word, pos)| {
-                (
-                    match_word,
-                    SpacedWord {
-                        seq: seq_idx,
-                        pos_in_seq: pos,
-                        dont_care_word,
-                    },
-                )
-            },
-        )
-    });
-    for (match_slice, seq_pos) in spaced_word_iter {
-        if let Some(word_matches) = spaced_words_in_seqs.get_mut(&match_slice) {
-            word_matches.push(seq_pos);
-        } else {
-            spaced_words_in_seqs.insert(match_slice, vec![seq_pos]);
-        }
-    }
-
-    spaced_words_in_seqs
-}
-
-//TODO provide a way to find matches for mutliple patterns at the same time,
-// should be much faster
-fn word_matches_in_single_sequence<'b, 'a: 'b>(
-    pattern: &'a Pattern,
-    sequence: &'b [u8],
-) -> impl Iterator<Item = (Word, Word, usize)> + 'b {
-    sequence
-        .windows(pattern.len())
-        .enumerate()
-        .map(move |(start_pos, slice)| {
-            let (match_word, dont_care_word) = pattern
-                ._match_slice(slice)
-                .expect("Bug in word_matches_in_single_sequence");
-            (match_word, dont_care_word, start_pos)
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,23 +254,5 @@ mod tests {
     #[test]
     fn test_generate_random_patterns() {
         dbg!(generate_random_patterns(10, 6, 12, 3, 4));
-    }
-
-    #[test]
-    fn match_word_encoding() {
-        let max = std::u8::MAX;
-        let a = [
-            b'L', b'N', b'A', b'F', b'M', b'L', b'Y', b'M', b'K', b'E', max, max,
-        ];
-        let b = [
-            b'K', b'K', b'K', b'R', b'K', b'R', b'E', b'K', max, max, max, max,
-        ];
-        let c = [
-            b'K', b'K', b'K', b'R', b'K', b'R', b'E', b'K', b'K', b'R', b'E', b'K',
-        ];
-
-        assert_eq!(<[u8; 12]>::from(MatchWord::from(a)), a);
-        assert_eq!(<[u8; 12]>::from(MatchWord::from(b)), b);
-        assert_eq!(<[u8; 12]>::from(MatchWord::from(c)), c);
     }
 }

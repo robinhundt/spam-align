@@ -5,18 +5,22 @@ use petgraph::{algo::toposort, Graph};
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::align::Matrix;
+use std::cmp::Ordering;
+use std::mem::swap;
+use std::time::Instant;
 
 pub struct Closure {
-    /// information about the positions in the aligned sequences
+    /// Information about the positions in the aligned sequences.
     sequences: Vec<Sequence>,
-    /// this stores information about which eq class is aligned with which
+    /// This stores information about which eq class is aligned with which
     /// positions for each sequence
-    /// is used to tell if a eq class is aligned with a seq (not aligned if val == 0)
+    ///
+    /// Is used to tell if a eq class is aligned with a seq (not aligned if val == 0)
     alig_set: Matrix<usize>,
 
-    /// how many eq classes are there in the current iteration
+    /// How many eq classes are there in the current iteration.
     nbr_alig_sets: usize,
-    /// how many eq classes are there in the previous iteration
+    /// How many eq classes are there in the previous iteration.
     old_nbr_alig_sets: usize,
 
     /// these are prob used to save the actual frontiers,
@@ -34,8 +38,12 @@ pub struct Closure {
     right1: Vec<usize>,
     right2: Vec<usize>,
 
-    /// indexed with 2 seq numbers
-    pos: Matrix<usize>,
+    /// This temporarily stores information about which pred/succ
+    /// frontiers to update. First the necessary changes are determined
+    /// and saved in this vec and then they are applied. This is needed
+    /// because changing the frontiers while determining which ones need
+    /// changing conflicts.
+    frontier_ops: Vec<[usize; 3]>,
 }
 
 struct Sequence {
@@ -95,7 +103,7 @@ impl Closure {
         let right1 = vec![0; nbr_seqs];
         let right2 = vec![0; nbr_seqs];
 
-        let pos = Matrix::zeros([nbr_seqs, nbr_seqs]);
+        let frontier_ops = vec![];
         Self {
             sequences,
             pred_frontier,
@@ -107,12 +115,12 @@ impl Closure {
             left2,
             right1,
             right2,
-            pos,
+            frontier_ops,
         }
     }
 
-    fn init_sequences(long_seq: &[usize]) -> Vec<Sequence> {
-        long_seq
+    fn init_sequences(seq_lengths: &[usize]) -> Vec<Sequence> {
+        seq_lengths
             .iter()
             .map(|len| {
                 let padded_len = len + 2;
@@ -130,7 +138,6 @@ impl Closure {
     /// returns false if the micro alignment is inconsistent with previously
     /// added ones or if it is already included in earlier ones
     pub fn try_add_micro_alignment(&mut self, micro_alignment: &MicroAlignment) -> bool {
-        // dbg!(micro_alignment);
         let mut added = false;
         let mut sites_to_add = vec![];
         for (a, b) in micro_alignment.site_pair_iter() {
@@ -205,34 +212,16 @@ impl Closure {
             }
         }
 
-        // Add these eq classes into a graph with edges from eq class a
-        // to b iff a < b as defined by the self.less method
-
-        let mut graph = Graph::<&Vec<Site>, ()>::with_capacity(classes.len(), 0);
-        let mut node_indices = vec![];
-        for eq_class in &classes {
-            node_indices.push(graph.add_node(eq_class));
-        }
-        for idx1 in &node_indices {
-            for idx2 in &node_indices {
-                let class1 = graph.node_weight(*idx1).unwrap();
-                let class2 = graph.node_weight(*idx2).unwrap();
-                let repr1 = class1.first().expect("Empty eq class");
-                let repr2 = class2.first().expect("Empty eq class");
-                if self.less(*repr1, *repr2) {
-                    graph.add_edge(*idx1, *idx2, ());
-                }
+        quicksort_by(&mut classes, &|a, b| {
+            let (a, b) = (a[0], b[0]);
+            if self.less(a, b) {
+                Ordering::Less
+            } else if self.less(b, a) {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
             }
-        }
-
-        // perform a topological sort of the indices of the graph and collect
-        // in sorted order the node weights representing eq classes into a vector
-        let sorted_indices = toposort(&graph, None).unwrap();
-        let sorted_classes = sorted_indices
-            .into_iter()
-            .map(|idx| graph.node_weight(idx).unwrap().deref().clone())
-            .collect_vec();
-        let mut classes = sorted_classes;
+        });
 
         // This handles the actual gap insertion by iterating the eq classes
         // from smallest (meaning the left most) to highest,
@@ -385,31 +374,10 @@ impl Closure {
             }
         }
 
-        // TODO dry out the following code
+        // change pred and succ frontiers for all eq classes != nn
+        // if necessary
 
-        for x in 0..self.sequences.len() {
-            if self.right1[x] == self.right2[x] {
-                continue;
-            }
-            for y in 0..self.sequences.len() {
-                self.pos[[x, y]] = 0;
-                let mut k = self.succ_frontier[[nn, x]];
-                if k == self.alig_set[[nn, x]] {
-                    k = self.sequences[x].succ_alig_set_pos[k];
-                }
-                if k <= self.sequences[x].len() {
-                    while k > 0 {
-                        let n = self.sequences[x].alig_set_nbr[k];
-                        if self.pred_frontier[[n, y]] < self.pred_frontier[[nn, y]] {
-                            self.pos[[x, y]] = k;
-                            k = self.sequences[x].succ_alig_set_pos[k];
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        self.frontier_ops.clear();
 
         for x in 0..self.sequences.len() {
             if self.right1[x] == self.right2[x] {
@@ -418,32 +386,55 @@ impl Closure {
             for y in 0..self.sequences.len() {
                 let mut k = self.succ_frontier[[nn, x]];
                 if k == self.alig_set[[nn, x]] {
+                    // eq calss nn is directly aligned with pos k in seq x
+                    // so we take the the pos of the next aligned pos after k
                     k = self.sequences[x].succ_alig_set_pos[k];
                 }
-                if self.pos[[x, y]] > 0 {
-                    while k > 0 && k <= self.pos[[x, y]] {
-                        let n = self.sequences[x].alig_set_nbr[k];
-                        self.pred_frontier[[n, y]] = self.pred_frontier[[nn, y]];
+
+                if k > self.sequences[x].len() {
+                    continue;
+                }
+
+                // k is the nearest succ_frontier position in x from the perspective
+                // of eq class nn, but not part of it
+                // we then iterate over the eq classes present in x which have position
+                // greater than the initial k and as long as their pred_frontier to **y**
+                // (so from [x, k] to y) is less than the pred frontier off nn to y
+                // we save k in pos[[x, y]]
+                let nn_to_y = self.pred_frontier[[nn, y]];
+                while k > 0 {
+                    let n = self.sequences[x].alig_set_nbr[k];
+                    if self.pred_frontier[[n, y]] < nn_to_y {
+                        self.frontier_ops.push([n, y, nn_to_y]);
                         k = self.sequences[x].succ_alig_set_pos[k];
+                    } else {
+                        break;
                     }
                 }
             }
         }
+        let pred_frontier = &mut self.pred_frontier;
+        self.frontier_ops.iter().for_each(|[n, y, new_front]| {
+            pred_frontier[[*n, *y]] = *new_front;
+        });
+
+        self.frontier_ops.clear();
 
         for x in 0..self.sequences.len() {
             if self.left1[x] == self.left2[x] {
                 continue;
             }
             for y in 0..self.sequences.len() {
-                self.pos[[x, y]] = 0;
                 let mut k = self.pred_frontier[[nn, x]];
                 if k > 0 && k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].pred_alig_set_pos[k];
                 }
+
+                let nn_to_y = self.succ_frontier[[nn, y]];
                 while k > 0 {
                     let n = self.sequences[x].alig_set_nbr[k];
-                    if self.succ_frontier[[n, y]] > self.succ_frontier[[nn, y]] {
-                        self.pos[[x, y]] = k;
+                    if self.succ_frontier[[n, y]] > nn_to_y {
+                        self.frontier_ops.push([n, y, nn_to_y]);
                         k = self.sequences[x].pred_alig_set_pos[k];
                     } else {
                         break;
@@ -451,25 +442,10 @@ impl Closure {
                 }
             }
         }
-
-        for x in 0..self.sequences.len() {
-            if self.left1[x] == self.left2[x] {
-                continue;
-            }
-            for y in 0..self.sequences.len() {
-                let mut k = self.pred_frontier[[nn, x]];
-                if k > 0 && k == self.alig_set[[nn, x]] {
-                    k = self.sequences[x].pred_alig_set_pos[k];
-                }
-                if self.pos[[x, y]] > 0 {
-                    while k >= self.pos[[x, y]] {
-                        let n = self.sequences[x].alig_set_nbr[k];
-                        self.succ_frontier[[n, y]] = self.succ_frontier[[nn, y]];
-                        k = self.sequences[x].pred_alig_set_pos[k];
-                    }
-                }
-            }
-        }
+        let succ_frontier = &mut self.succ_frontier;
+        self.frontier_ops.iter().for_each(|[n, y, new_front]| {
+            succ_frontier[[*n, *y]] = *new_front;
+        });
 
         let mut update_sequences = |n: usize, site: Site| {
             if n != 0 {
@@ -538,5 +514,63 @@ impl Closure {
         self.succ_frontier.resize_rows(new_rows);
         self.alig_set.resize_rows(new_rows);
         self.old_nbr_alig_sets = self.nbr_alig_sets;
+    }
+}
+
+fn quicksort_by<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: &F) {
+    if data.is_empty() {
+        return;
+    }
+    let p = partition(data, cmp);
+    let (data1, data2) = data.split_at_mut(p);
+    quicksort_by(data1, cmp);
+    quicksort_by(&mut data2[1..], cmp);
+}
+
+fn partition<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: F) -> usize {
+    let pivot_idx = data.len() - 1;
+    let mut i = 0;
+
+    for j in 0..pivot_idx {
+        if cmp(&data[j], &data[pivot_idx]) == Ordering::Less {
+            data.swap(i, j);
+            i += 1;
+        }
+    }
+    data.swap(i, pivot_idx);
+    i
+
+    // loop {
+    //     i += 1;
+    //     let mut i = i as usize;
+    //     while cmp(&data[i], &data[pivot_idx]) == Ordering::Less {
+    //         i += 1;
+    //     }
+    //     j -= 1;
+    //     while cmp(&data[j], &data[pivot_idx]) == Ordering::Greater {
+    //         j -= 1;
+    //     }
+    //     if i >= j {
+    //         return j;
+    //     }
+    //     data.swap(i, j);
+    // }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quicksort_by;
+    use rand::prelude::*;
+
+    #[test]
+    fn test_quicksort() {
+        let mut rng = rand::thread_rng();
+        let mut nums: Vec<usize> = (1..1000).collect();
+        let nums_expected = nums.clone();
+        for _ in 0..10 {
+            nums.shuffle(&mut rng);
+            quicksort_by(&mut nums, &|a, b| a.cmp(b));
+            assert_eq!(nums_expected, nums)
+        }
     }
 }

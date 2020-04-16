@@ -10,6 +10,7 @@ use crate::align::micro_alignment::{
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
 use crate::Sequence;
+use std::time::Instant;
 
 pub mod gabios;
 pub mod micro_alignment;
@@ -21,11 +22,12 @@ pub enum AlignProgress {
 }
 
 pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignProgress) {
+    // let now = Instant::now();
     let diagonals =
         construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
     let mut diagonals = diagonals.collect_vec();
     diagonals.sort_by_cached_key(|diag| -diag.score);
-
+    // eprintln!("diag {}", now.elapsed().as_millis());
     let seq_lengths = sequences.iter().map(|seq| seq.len()).collect_vec();
 
     let mut transitive_closure = TransitiveClosure::new(&seq_lengths);
@@ -38,12 +40,16 @@ pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignPr
         progress_bar.set_draw_delta(num_diagonals as u64 / 100);
         diagonals = Box::new(diagonals.progress_with(progress_bar));
     }
+    // let now = Instant::now();
 
     diagonals.for_each(|scored_diag| {
         transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment);
     });
+    // eprintln!("add diags {}", now.elapsed().as_millis());
 
+    // let now = Instant::now();
     transitive_closure.align(sequences);
+    // eprintln!("align {}", now.elapsed().as_millis());
 }
 
 #[derive(Default)]
@@ -90,14 +96,22 @@ impl<E> Index<[usize; 2]> for Matrix<E> {
 
     fn index(&self, index: [usize; 2]) -> &Self::Output {
         let idx = index[0] * self.cols + index[1];
-        &self.data[idx]
+        // &self.data[idx]
+        // TODO this is really naughty thing and should not be done this way....
+        // but it brings a nice performance boost. Change to better unsafe encapsulation
+        // in future
+        unsafe { self.data.get_unchecked(idx) }
     }
 }
 
 impl<E> IndexMut<[usize; 2]> for Matrix<E> {
     fn index_mut(&mut self, index: [usize; 2]) -> &mut Self::Output {
         let idx = index[0] * self.cols + index[1];
-        &mut self.data[idx]
+        // &mut self.data[idx]
+        // TODO this is really naughty thing and should not be done this way....
+        // but it brings a nice performance boost. Change to better unsafe encapsulation
+        // in future
+        unsafe { self.data.get_unchecked_mut(idx) }
     }
 }
 

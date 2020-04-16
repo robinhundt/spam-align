@@ -1,13 +1,12 @@
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashSet;
 use itertools::Itertools;
-use rayon::prelude::*;
 use smallvec::SmallVec;
 
-use crate::Sequence;
 use crate::spaced_word::{MatchWord, Pattern};
+use crate::Sequence;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Represents a multidimensional diagonal over n sequences
@@ -53,29 +52,6 @@ impl MicroAlignment {
                     })
             })
     }
-
-    pub fn site_pair_par_iter(&self) -> impl ParallelIterator<Item = (Site, Site)> + '_ {
-        self.start_sites
-            .par_iter()
-            .zip(self.start_sites.par_iter().skip(1))
-            .flat_map(move |(site_a, site_b)| {
-                (site_a.pos..site_a.pos + self.k)
-                    .into_par_iter()
-                    .zip((site_b.pos..site_b.pos + self.k).into_par_iter())
-                    .map(move |(pos_a, pos_b)| {
-                        (
-                            Site {
-                                seq: site_a.seq,
-                                pos: pos_a,
-                            },
-                            Site {
-                                seq: site_b.seq,
-                                pos: pos_b,
-                            },
-                        )
-                    })
-            })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -100,44 +76,6 @@ pub struct Site {
 pub struct Match {
     key: MatchWord,
     start_site: Site,
-}
-
-pub fn compute_multi_dim_micro_alignment_information(
-    patterns: &[Pattern],
-    sequences: &[Sequence],
-    //    score_fn: fn(&[&[u8]]) -> i32,
-) -> FxHashMap<usize, usize> {
-    let max_seq_len = sequences
-        .iter()
-        .map(|seq| seq.len())
-        .max()
-        .expect("Can not construct diagonals from empty sequences");
-    //    let (sum, count) =
-    let mut dim_counts = FxHashMap::default();
-    for pattern in patterns {
-        generate_sorted_matches(pattern, sequences, max_seq_len)
-            .into_iter()
-            .group_by(|pattern_match| pattern_match.key)
-            .into_iter()
-            .for_each(|(_, matches)| {
-                let mut matches: SmallVec<[Match; 8]> = SmallVec::from_iter(matches);
-                matches.sort_unstable_by_key(|word_match| word_match.start_site.seq);
-                let dim = matches
-                    .into_iter()
-                    .group_by(|pattern_match| pattern_match.start_site.seq)
-                    .into_iter()
-                    .count();
-                if dim == 1 {
-                    return;
-                }
-                *dim_counts.entry(dim).or_insert(0) += 1;
-            });
-    }
-    dim_counts
-    //        .fold((0, 0), |(sum, count), match_dim| {
-    //            (sum + match_dim, count + 1)
-    //        });
-    //    sum as f64 / count as f64
 }
 
 pub fn construct_micro_alignments_from_patterns<'a>(
