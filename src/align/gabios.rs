@@ -277,10 +277,13 @@ impl Closure {
         // this condition is guaranteed by filtering the
         // micro alignment that is added in the `try_add_micro_alignment`
         // method
-        assert!(
-            n1 != n2 || n1 == 0 || n2 == 0,
-            "Sites must belong to different eq classes or at least one must not be aligned"
-        );
+        // assert!(
+        //     n1 != n2 || n1 == 0 || n2 == 0,
+        //     "Sites must belong to different eq classes or at least one must not be aligned"
+        // );
+        if !(n1 != n2 || n1 == 0 || n2 == 0) {
+            return;
+        }
 
         let lookup_alig_set = |n: usize, site: Site| {
             let mut ng = n;

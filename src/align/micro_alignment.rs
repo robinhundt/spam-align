@@ -34,7 +34,7 @@ impl MicroAlignment {
     pub fn site_pair_iter(&self) -> impl Iterator<Item = (Site, Site)> + '_ {
         self.start_sites
             .iter()
-            .zip(self.start_sites.iter().skip(1))
+            .tuple_combinations()
             .flat_map(move |(site_a, site_b)| {
                 (site_a.pos..site_a.pos + self.k)
                     .zip(site_b.pos..site_b.pos + self.k)
@@ -147,16 +147,18 @@ fn generate_sorted_matches(
     pattern_matches
 }
 
-fn generate_combinations(match_group: SmallVec<[Match; 8]>) -> impl Iterator<Item = Vec<Match>> {
-    //    match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
-    //    let match_group = match_group;
-    //    if match_group
-    //        .iter()
-    //        .group_by(|word_match| word_match.start_site.seq)
-    //        .into_iter()
-    //        .map(|a| a.1)
-    //        .fold(1, |acc, x| acc * x.count())
-    //        > 100
+fn generate_combinations(
+    mut match_group: SmallVec<[Match; 8]>,
+) -> Box<dyn Iterator<Item = Vec<Match>>> {
+    match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
+    let match_group = match_group;
+    if match_group
+        .iter()
+        .group_by(|word_match| word_match.start_site.seq)
+        .into_iter()
+        .map(|a| a.1)
+        .fold(1, |acc, x| acc * x.count())
+        > 100
     {
         return Box::new(
             match_group
@@ -167,27 +169,27 @@ fn generate_combinations(match_group: SmallVec<[Match; 8]>) -> impl Iterator<Ite
                 }),
         );
     }
-    //    Box::new(
-    //        match_group
-    //            .into_iter()
-    //            .group_by(|word_match| word_match.start_site.seq)
-    //            .into_iter()
-    //            .map(|(_, group)| group.into_iter().collect_vec())
-    //            .multi_cartesian_product()
-    //            .filter(|combination| {
-    //                let unique_seq_cnt = combination
-    //                    .iter()
-    //                    .unique_by(|match_word| match_word.start_site.seq)
-    //                    .count();
-    //                assert_eq!(
-    //                    unique_seq_cnt,
-    //                    combination.len(),
-    //                    "Combination has sites with duplicate seq: {:?}",
-    //                    &combination
-    //                );
-    //                combination.len() > 1
-    //            }),
-    //    )
+    Box::new(
+        match_group
+            .into_iter()
+            .group_by(|word_match| word_match.start_site.seq)
+            .into_iter()
+            .map(|(_, group)| group.into_iter().collect_vec())
+            .multi_cartesian_product()
+            .filter(|combination| {
+                let unique_seq_cnt = combination
+                    .iter()
+                    .unique_by(|match_word| match_word.start_site.seq)
+                    .count();
+                assert_eq!(
+                    unique_seq_cnt,
+                    combination.len(),
+                    "Combination has sites with duplicate seq: {:?}",
+                    &combination
+                );
+                combination.len() > 1
+            }),
+    )
 }
 
 fn score_match_combination(
@@ -315,6 +317,8 @@ mod tests {
         let expected = vec![
             (Site { seq: 1, pos: 3 }, Site { seq: 2, pos: 5 }),
             (Site { seq: 1, pos: 4 }, Site { seq: 2, pos: 6 }),
+            (Site { seq: 1, pos: 3 }, Site { seq: 4, pos: 4 }),
+            (Site { seq: 1, pos: 4 }, Site { seq: 4, pos: 5 }),
             (Site { seq: 2, pos: 5 }, Site { seq: 4, pos: 4 }),
             (Site { seq: 2, pos: 6 }, Site { seq: 4, pos: 5 }),
         ];
@@ -342,6 +346,15 @@ mod tests {
             vec![m!(2), m!(3)],
             vec![m!(2), m!(3)],
         ];
+
+        // if dynaimc max dim
+        // let expected = vec![
+        //     vec![m!(1), m!(2)],
+        //     vec![m!(1), m!(2)],
+        //     vec![m!(1), m!(3)],
+        //     vec![m!(2), m!(3)],
+        //     vec![m!(2), m!(3)],
+        // ];
 
         assert_eq!(generate_combinations(match_group).collect_vec(), expected)
     }
