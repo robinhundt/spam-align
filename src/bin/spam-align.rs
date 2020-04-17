@@ -24,6 +24,7 @@ struct Opt {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
     let opt: Opt = Opt::from_args();
     let mut sequences = load_sequences(opt.in_file)?;
     let patterns = read_patterns_from_file(opt.pattern_set_path)?;

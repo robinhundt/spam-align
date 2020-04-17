@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use bio::io::fasta;
 
 use crate::align::micro_alignment::Site;
+use std::time::Instant;
 
 pub mod align;
 pub mod score;
@@ -204,16 +205,20 @@ pub fn read_fasta(path: impl AsRef<Path>) -> Result<Vec<Sequence>> {
     let reader = fasta::Reader::new(file);
     let sequences: Result<Vec<_>> = reader
         .records()
-        .map(|record| {
-            match record {
-                Ok(record) => Ok(Sequence::new(
-                    record.id().to_string(),
-                    record.seq().to_vec(),
-                )),
-                Err(err) => Err(err.into()),
-            }
-            // record.map(|record| Sequence::new(record.id().to_string(), record.seq().to_vec()))
+        .map(|record| match record {
+            Ok(record) => Ok(Sequence::new(
+                record.id().to_string(),
+                record.seq().to_vec(),
+            )),
+            Err(err) => Err(err.into()),
         })
         .collect();
     sequences.context("Reading record")
+}
+
+fn log_elapsed_time<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
+    let now = Instant::now();
+    let ret = f();
+    log::info!("<{}>: {}ms", name, now.elapsed().as_millis());
+    ret
 }

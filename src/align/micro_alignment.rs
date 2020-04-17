@@ -11,12 +11,12 @@ use crate::Sequence;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Represents a multidimensional diagonal over n sequences
 /// if <= 15 sequences are part of the diagonal the end sites are stored
-/// inline, otherwise they spill onto the heap
+/// inline, otherwise they spi2 onto the heap
 pub struct MicroAlignment {
     /// start points in sequences of the diagonal
     /// uses a small vec which stores the end sites inline
     /// if there are less than 15
-    pub start_sites: SmallVec<[Site; 15]>, // TODO benchmark this parameter
+    pub start_sites: SmallVec<[Site; 2]>, // TODO benchmark this parameter
     /// diagonal length
     pub k: usize,
 }
@@ -196,12 +196,12 @@ fn score_match_combination(
     sequences: &[Sequence],
     pattern: &Pattern,
 ) -> ScoredMicroAlignment {
-    let msa: SmallVec<[&[u8]; 15]> = SmallVec::from_iter(combination.iter().map(|pattern_match| {
+    let msa: SmallVec<[&[u8]; 2]> = SmallVec::from_iter(combination.iter().map(|pattern_match| {
         let start_site = pattern_match.start_site;
         &sequences[start_site.seq].data[start_site.pos..start_site.pos + pattern.len()]
     }));
     let msa_score = score_fn(&msa[..]);
-    let start_sites: SmallVec<[Site; 15]> = SmallVec::from_iter(
+    let start_sites: SmallVec<[Site; 2]> = SmallVec::from_iter(
         combination
             .into_iter()
             .map(|pattern_match| pattern_match.start_site),

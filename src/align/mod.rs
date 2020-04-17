@@ -9,7 +9,7 @@ use crate::align::micro_alignment::{
 };
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
-use crate::Sequence;
+use crate::{log_elapsed_time, Sequence};
 use std::time::Instant;
 
 pub mod gabios;
@@ -22,12 +22,14 @@ pub enum AlignProgress {
 }
 
 pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignProgress) {
-    // let now = Instant::now();
-    let diagonals =
-        construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
-    let mut diagonals = diagonals.collect_vec();
-    diagonals.sort_by_cached_key(|diag| -diag.score);
-    // eprintln!("diag {}", now.elapsed().as_millis());
+    let diagonals = log_elapsed_time("Constructing diagonals", || {
+        let diagonals =
+            construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
+        let mut diagonals = diagonals.collect_vec();
+        diagonals.sort_by_cached_key(|diag| -diag.score);
+        diagonals
+    });
+
     let seq_lengths = sequences.iter().map(|seq| seq.len()).collect_vec();
 
     let mut transitive_closure = TransitiveClosure::new(&seq_lengths);
@@ -38,18 +40,18 @@ pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignPr
     if let AlignProgress::Show = progress {
         let progress_bar = ProgressBar::new(num_diagonals as u64);
         progress_bar.set_draw_delta(num_diagonals as u64 / 100);
+        progress_bar.println("Adding micro alignments...");
         diagonals = Box::new(diagonals.progress_with(progress_bar));
     }
-    // let now = Instant::now();
-
-    diagonals.for_each(|scored_diag| {
-        transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment);
+    log_elapsed_time("Adding diagonals", || {
+        diagonals.for_each(|scored_diag| {
+            transitive_closure.try_add_micro_alignment(&scored_diag.micro_alignment);
+        });
     });
-    // eprintln!("add diags {}", now.elapsed().as_millis());
 
-    // let now = Instant::now();
-    transitive_closure.align(sequences);
-    // eprintln!("align {}", now.elapsed().as_millis());
+    log_elapsed_time("Aligning sequences", || {
+        transitive_closure.align(sequences);
+    });
 }
 
 #[derive(Default)]

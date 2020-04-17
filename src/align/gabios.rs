@@ -5,6 +5,7 @@ use petgraph::{algo::toposort, Graph};
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::align::Matrix;
+use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::mem::swap;
 use std::time::Instant;
@@ -139,7 +140,7 @@ impl Closure {
     /// added ones or if it is already included in earlier ones
     pub fn try_add_micro_alignment(&mut self, micro_alignment: &MicroAlignment) -> bool {
         let mut added = false;
-        let mut sites_to_add = vec![];
+        let mut sites_to_add: SmallVec<[(ShiftedSite, ShiftedSite); 15]> = SmallVec::new();
         for (a, b) in micro_alignment.site_pair_iter() {
             let (a, b) = (a.into(), b.into());
             if !self.alignable(a, b) {
@@ -400,7 +401,8 @@ impl Closure {
                 // we then iterate over the eq classes present in x which have position
                 // greater than the initial k and as long as their pred_frontier to **y**
                 // (so from [x, k] to y) is less than the pred frontier off nn to y
-                // we save k in pos[[x, y]]
+                // we save the need to change the bound from n to y to the value of
+                // nn_to_y in self.frontier_ops
                 let nn_to_y = self.pred_frontier[[nn, y]];
                 while k > 0 {
                     let n = self.sequences[x].alig_set_nbr[k];
