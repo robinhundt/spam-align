@@ -1,14 +1,11 @@
-use std::ops::{Deref, Not};
+use std::cmp::Ordering;
+use std::ops::Not;
 
-use itertools::{repeat_n, Itertools};
-use petgraph::{algo::toposort, Graph};
+use itertools::repeat_n;
+use smallvec::SmallVec;
 
 use crate::align::micro_alignment::{MicroAlignment, Site};
 use crate::align::Matrix;
-use smallvec::SmallVec;
-use std::cmp::Ordering;
-use std::mem::swap;
-use std::time::Instant;
 
 pub struct Closure {
     /// Information about the positions in the aligned sequences.
@@ -564,8 +561,9 @@ fn partition<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: F) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::quicksort_by;
     use rand::prelude::*;
+
+    use super::quicksort_by;
 
     #[test]
     fn test_quicksort() {

@@ -174,7 +174,7 @@ fn generate_combinations(
             .into_iter()
             .group_by(|word_match| word_match.start_site.seq)
             .into_iter()
-            .map(|(_, group)| group.into_iter().collect_vec())
+            .map(|(_, group)| group.collect_vec())
             .multi_cartesian_product()
             .filter(|combination| {
                 let unique_seq_cnt = combination

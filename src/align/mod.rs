@@ -10,7 +10,6 @@ use crate::align::micro_alignment::{
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
 use crate::{log_elapsed_time, Sequence};
-use std::time::Instant;
 
 pub mod gabios;
 pub mod micro_alignment;
