@@ -156,8 +156,8 @@ fn generate_combinations(
         .iter()
         .group_by(|word_match| word_match.start_site.seq)
         .into_iter()
-        .map(|a| a.1)
-        .fold(1, |acc, x| acc * x.count())
+        .map(|a| a.1.count() as u128)
+        .product::<u128>()
         > 100
     {
         return Box::new(
