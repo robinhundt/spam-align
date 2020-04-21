@@ -149,16 +149,16 @@ fn generate_sorted_matches(
 
 fn generate_combinations(
     mut match_group: SmallVec<[Match; 8]>,
-) -> Box<dyn Iterator<Item = Vec<Match>>> {
-    match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
-    let match_group = match_group;
-    if match_group
-        .iter()
-        .group_by(|word_match| word_match.start_site.seq)
-        .into_iter()
-        .map(|a| a.1.count() as u128)
-        .product::<u128>()
-        > 100
+) -> impl Iterator<Item = Vec<Match>> {
+    // match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
+    // let match_group = match_group;
+    // if match_group
+    //     .iter()
+    //     .group_by(|word_match| word_match.start_site.seq)
+    //     .into_iter()
+    //     .map(|a| a.1.count() as u128)
+    //     .product::<u128>()
+    //     > 100
     {
         return Box::new(
             match_group
@@ -169,27 +169,27 @@ fn generate_combinations(
                 }),
         );
     }
-    Box::new(
-        match_group
-            .into_iter()
-            .group_by(|word_match| word_match.start_site.seq)
-            .into_iter()
-            .map(|(_, group)| group.collect_vec())
-            .multi_cartesian_product()
-            .filter(|combination| {
-                let unique_seq_cnt = combination
-                    .iter()
-                    .unique_by(|match_word| match_word.start_site.seq)
-                    .count();
-                assert_eq!(
-                    unique_seq_cnt,
-                    combination.len(),
-                    "Combination has sites with duplicate seq: {:?}",
-                    &combination
-                );
-                combination.len() > 1
-            }),
-    )
+    // Box::new(
+    //     match_group
+    //         .into_iter()
+    //         .group_by(|word_match| word_match.start_site.seq)
+    //         .into_iter()
+    //         .map(|(_, group)| group.collect_vec())
+    //         .multi_cartesian_product()
+    //         .filter(|combination| {
+    //             let unique_seq_cnt = combination
+    //                 .iter()
+    //                 .unique_by(|match_word| match_word.start_site.seq)
+    //                 .count();
+    //             assert_eq!(
+    //                 unique_seq_cnt,
+    //                 combination.len(),
+    //                 "Combination has sites with duplicate seq: {:?}",
+    //                 &combination
+    //             );
+    //             combination.len() > 1
+    //         }),
+    // )
 }
 
 fn score_match_combination(
