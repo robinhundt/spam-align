@@ -160,14 +160,12 @@ fn generate_combinations(
     //     .product::<u128>()
     //     > 100
     {
-        return Box::new(
-            match_group
-                .into_iter()
-                .combinations(2)
-                .filter(|combination| {
-                    combination[0].start_site.seq != combination[1].start_site.seq
-                }),
-        );
+        // return Box::new(
+        match_group
+            .into_iter()
+            .combinations(2)
+            .filter(|combination| combination[0].start_site.seq != combination[1].start_site.seq)
+        // );
     }
     // Box::new(
     //     match_group

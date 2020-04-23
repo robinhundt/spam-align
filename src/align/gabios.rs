@@ -387,7 +387,7 @@ impl Closure {
             for y in 0..self.sequences.len() {
                 let mut k = self.succ_frontier[[nn, x]];
                 if k == self.alig_set[[nn, x]] {
-                    // eq calss nn is directly aligned with pos k in seq x
+                    // eq class nn is directly aligned with pos k in seq x
                     // so we take the the pos of the next aligned pos after k
                     k = self.sequences[x].succ_alig_set_pos[k];
                 }
