@@ -53,8 +53,8 @@ pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignPr
     });
 }
 
-#[derive(Default)]
-pub struct Matrix<E> {
+#[derive(Default, Clone)]
+pub struct Matrix<E: Clone> {
     rows: usize,
     cols: usize,
     elem: E,
@@ -67,7 +67,7 @@ pub struct MatrixMutView<'a, E> {
     data: &'a mut [E],
 }
 
-impl<E> Matrix<E> {
+impl<E: Clone> Matrix<E> {
     pub fn rows(&self) -> usize {
         self.rows
     }
@@ -80,6 +80,10 @@ impl<E> Matrix<E> {
         let start = row * self.cols;
         let end = (row + 1) * self.cols;
         &self.data[start..end]
+    }
+
+    pub fn row_iter(&self) -> impl Iterator<Item = &[E]> + '_ {
+        (0..self.rows).map(move |row| self.row(row))
     }
 
     pub fn row_mut(&mut self, row: usize) -> &mut [E] {
@@ -132,7 +136,7 @@ impl<'a, E> MatrixMutView<'a, E> {
     }
 }
 
-impl<E> Index<[usize; 2]> for Matrix<E> {
+impl<E: Clone> Index<[usize; 2]> for Matrix<E> {
     type Output = E;
 
     fn index(&self, index: [usize; 2]) -> &Self::Output {
@@ -145,7 +149,7 @@ impl<E> Index<[usize; 2]> for Matrix<E> {
     }
 }
 
-impl<E> IndexMut<[usize; 2]> for Matrix<E> {
+impl<E: Clone> IndexMut<[usize; 2]> for Matrix<E> {
     fn index_mut(&mut self, index: [usize; 2]) -> &mut Self::Output {
         let idx = index[0] * self.cols + index[1];
         // &mut self.data[idx]

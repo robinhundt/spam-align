@@ -9,7 +9,7 @@ use crate::align::Matrix;
 
 pub struct Closure {
     /// Information about the positions in the aligned sequences.
-    sequences: Vec<Sequence>,
+    sequences: Sequences,
     /// This stores information about which eq class is aligned with which
     /// positions for each sequence
     ///
@@ -37,27 +37,20 @@ pub struct Closure {
     succ_frontier_ops: Vec<[usize; 3]>,
 }
 
-struct Sequence {
-    length: usize,
+struct Sequences {
+    lengths: Vec<usize>,
     /// index with seq pos, stores id of alig set this site belongs to
-    alig_set_nbr: Vec<usize>,
+    alig_set_nbr: Matrix<usize>,
     /// next class information for pred frontier
-    pred_alig_set_pos: Vec<usize>,
+    pred_alig_set_pos: Matrix<usize>,
     /// next class information for succ frontier
-    succ_alig_set_pos: Vec<usize>,
+    succ_alig_set_pos: Matrix<usize>,
 }
 
-impl Sequence {
+impl Sequences {
     fn len(&self) -> usize {
-        self.length
+        self.lengths.len()
     }
-}
-
-// TODO this can prob be replaced by a matrix which would reduce number of
-// bounds checks
-#[derive(Clone)]
-struct PositionSet {
-    pos: Vec<usize>,
 }
 
 /// Wrapper for a site whose position is increased by 1
@@ -83,7 +76,7 @@ impl Closure {
     pub fn new(seq_lengths: &[usize]) -> Self {
         let &max_length = seq_lengths.iter().max().expect("No sequences");
         let sequences = Closure::init_sequences(seq_lengths);
-        let nbr_seqs = sequences.len();
+        let nbr_seqs = sequences.lengths.len();
 
         let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
         let succ_frontier = Matrix::from_elem([max_length + 2, nbr_seqs], usize::MAX);
@@ -103,19 +96,15 @@ impl Closure {
         }
     }
 
-    fn init_sequences(seq_lengths: &[usize]) -> Vec<Sequence> {
-        seq_lengths
-            .iter()
-            .map(|len| {
-                let padded_len = len + 2;
-                Sequence {
-                    length: *len,
-                    alig_set_nbr: vec![0; padded_len],
-                    pred_alig_set_pos: vec![0; padded_len],
-                    succ_alig_set_pos: vec![0; padded_len],
-                }
-            })
-            .collect()
+    fn init_sequences(seq_lengths: &[usize]) -> Sequences {
+        let max_len = seq_lengths.iter().max().expect("No sequences") + 2;
+        let mat = Matrix::zeros([seq_lengths.len(), max_len]);
+        Sequences {
+            lengths: seq_lengths.to_vec(),
+            alig_set_nbr: mat.clone(),
+            pred_alig_set_pos: mat.clone(),
+            succ_alig_set_pos: mat,
+        }
     }
 
     /// Try to add the passed micro alignment to the partial alignment
@@ -143,9 +132,9 @@ impl Closure {
     fn aligned(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
         let (a, b) = (a.0, b.0);
         a.seq == b.seq && a.pos == b.pos
-            || self.sequences[a.seq].alig_set_nbr[a.pos] != 0
-                && self.sequences[a.seq].alig_set_nbr[a.pos]
-                    == self.sequences[b.seq].alig_set_nbr[b.pos]
+            || self.sequences.alig_set_nbr[[a.seq, a.pos]] != 0
+                && self.sequences.alig_set_nbr[[a.seq, a.pos]]
+                    == self.sequences.alig_set_nbr[[b.seq, b.pos]]
     }
 
     pub fn less(&self, left: Site, right: Site) -> bool {
@@ -166,11 +155,11 @@ impl Closure {
         if a.seq == b.seq {
             return a.pos < b.pos;
         }
-        let mut n2 = self.sequences[b.seq].alig_set_nbr[b.pos];
+        let mut n2 = self.sequences.alig_set_nbr[[b.seq, b.pos]];
         if n2 == 0 {
-            let k = self.sequences[b.seq].pred_alig_set_pos[b.pos];
+            let k = self.sequences.pred_alig_set_pos[[b.seq, b.pos]];
             if k > 0 {
-                n2 = self.sequences[b.seq].alig_set_nbr[k];
+                n2 = self.sequences.alig_set_nbr[[b.seq, k]];
             }
         }
         if n2 == 0 {
@@ -185,8 +174,8 @@ impl Closure {
         // Gather a vec of vec of sites, where each Vec<Site> represents
         // an equivalency class of aligned sites
         let mut classes = vec![vec![]; self.nbr_alig_sets];
-        for (idx, seq) in self.sequences.iter().enumerate() {
-            for (pos, alig_set) in seq.alig_set_nbr.iter().enumerate().skip(1) {
+        for (idx, seq_alig_set) in self.sequences.alig_set_nbr.row_iter().enumerate() {
+            for (pos, alig_set) in seq_alig_set.iter().enumerate().skip(1) {
                 if *alig_set == 0 {
                     continue;
                 }
@@ -254,8 +243,8 @@ impl Closure {
 
     fn add_aligned_positions(&mut self, a: ShiftedSite, b: ShiftedSite) {
         let (a, b) = (a.0, b.0);
-        let n1 = self.sequences[a.seq].alig_set_nbr[a.pos];
-        let n2 = self.sequences[b.seq].alig_set_nbr[b.pos];
+        let n1 = self.sequences.alig_set_nbr[[a.seq, a.pos]];
+        let n2 = self.sequences.alig_set_nbr[[b.seq, b.pos]];
 
         // this condition is guaranteed by filtering the
         // micro alignment that is added in the `try_add_micro_alignment`
@@ -272,13 +261,13 @@ impl Closure {
             let mut ng = n;
             let mut nd = n;
             if n == 0 {
-                let mut k = self.sequences[site.seq].pred_alig_set_pos[site.pos];
+                let mut k = self.sequences.pred_alig_set_pos[[site.seq, site.pos]];
                 if k > 0 {
-                    ng = self.sequences[site.seq].alig_set_nbr[k];
+                    ng = self.sequences.alig_set_nbr[[site.seq, k]];
                 }
-                k = self.sequences[site.seq].succ_alig_set_pos[site.pos];
+                k = self.sequences.succ_alig_set_pos[[site.seq, site.pos]];
                 if k > 0 {
-                    nd = self.sequences[site.seq].alig_set_nbr[k];
+                    nd = self.sequences.alig_set_nbr[[site.seq, k]];
                 }
             }
             (ng, nd)
@@ -324,7 +313,7 @@ impl Closure {
         for x in 0..self.sequences.len() {
             let k = self.alig_set[[nn, x]];
             if k > 0 {
-                self.sequences[x].alig_set_nbr[k] = nn;
+                self.sequences.alig_set_nbr[[x, k]] = nn;
             }
         }
 
@@ -342,7 +331,7 @@ impl Closure {
                 if k == self.alig_set[[nn, x]] {
                     // eq class nn is directly aligned with pos k in seq x
                     // so we take the the pos of the next aligned pos after k
-                    k = self.sequences[x].succ_alig_set_pos[k];
+                    k = self.sequences.succ_alig_set_pos[[x, k]];
                 }
 
                 // k is the nearest succ_frontier position in x from the perspective
@@ -354,10 +343,10 @@ impl Closure {
                 // nn_to_y in self.frontier_ops
                 let nn_to_y = nn_pred[y];
                 while k > 0 {
-                    let n = self.sequences[x].alig_set_nbr[k];
+                    let n = self.sequences.alig_set_nbr[[x, k]];
                     if sub_mat_pred[[n, y]] < nn_to_y {
                         self.pred_frontier_ops.push([n, y, nn_to_y]);
-                        k = self.sequences[x].succ_alig_set_pos[k];
+                        k = self.sequences.succ_alig_set_pos[[x, k]];
                     } else {
                         break;
                     }
@@ -374,15 +363,15 @@ impl Closure {
             for y in 0..self.sequences.len() {
                 let mut k = nn_pred[x];
                 if k > 0 && k == self.alig_set[[nn, x]] {
-                    k = self.sequences[x].pred_alig_set_pos[k];
+                    k = self.sequences.pred_alig_set_pos[[x, k]];
                 }
 
                 let nn_to_y = nn_succ[y];
                 while k > 0 {
-                    let n = self.sequences[x].alig_set_nbr[k];
+                    let n = self.sequences.alig_set_nbr[[x, k]];
                     if sub_mat_succ[[n, y]] > nn_to_y {
                         self.succ_frontier_ops.push([n, y, nn_to_y]);
-                        k = self.sequences[x].pred_alig_set_pos[k];
+                        k = self.sequences.pred_alig_set_pos[[x, k]];
                     } else {
                         break;
                     }
@@ -403,23 +392,23 @@ impl Closure {
             }
 
             let mut k = site.pos - 1;
-            while k > 0 && self.sequences[site.seq].alig_set_nbr[k] == 0 {
-                self.sequences[site.seq].succ_alig_set_pos[k] = site.pos;
+            while k > 0 && self.sequences.alig_set_nbr[[site.seq, k]] == 0 {
+                self.sequences.succ_alig_set_pos[[site.seq, k]] = site.pos;
                 k -= 1;
             }
             if k > 0 {
-                self.sequences[site.seq].succ_alig_set_pos[k] = site.pos;
+                self.sequences.succ_alig_set_pos[[site.seq, k]] = site.pos;
             }
 
             let mut k = site.pos + 1;
-            while k <= self.sequences[site.seq].len()
-                && self.sequences[site.seq].alig_set_nbr[k] == 0
+            while k <= self.sequences.lengths[site.seq]
+                && self.sequences.alig_set_nbr[[site.seq, k]] == 0
             {
-                self.sequences[site.seq].pred_alig_set_pos[k] = site.pos;
+                self.sequences.pred_alig_set_pos[[site.seq, k]] = site.pos;
                 k += 1;
             }
-            if k <= self.sequences[site.seq].len() {
-                self.sequences[site.seq].pred_alig_set_pos[k] = site.pos
+            if k <= self.sequences.lengths[site.seq] {
+                self.sequences.pred_alig_set_pos[[site.seq, k]] = site.pos
             }
         };
 
@@ -448,7 +437,7 @@ impl Closure {
             let k = self.alig_set[[n2, x]];
             self.alig_set[[n1, x]] = k;
             if k > 0 {
-                self.sequences[x].alig_set_nbr[k] = n1;
+                self.sequences.alig_set_nbr[[x, k]] = n1;
             }
             self.pred_frontier[[n1, x]] = self.pred_frontier[[n2, x]];
             self.succ_frontier[[n1, x]] = self.succ_frontier[[n2, x]];
