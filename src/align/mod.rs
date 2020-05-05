@@ -57,7 +57,14 @@ pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignPr
 pub struct Matrix<E> {
     rows: usize,
     cols: usize,
+    elem: E,
     data: Vec<E>,
+}
+
+pub struct MatrixMutView<'a, E> {
+    rows: usize,
+    cols: usize,
+    data: &'a mut [E],
 }
 
 impl<E> Matrix<E> {
@@ -74,14 +81,39 @@ impl<E> Matrix<E> {
         let end = (row + 1) * self.cols;
         &self.data[start..end]
     }
+
+    pub fn row_mut(&mut self, row: usize) -> &mut [E] {
+        let start = row * self.cols;
+        let end = (row + 1) * self.cols;
+        &mut self.data[start..end]
+    }
+
+    pub fn split_at_mut(&mut self, row_idx: usize) -> (MatrixMutView<'_, E>, &mut [E]) {
+        let start = row_idx * self.cols;
+        let (before, after) = self.data.split_at_mut(start);
+        let row = &mut after[0..self.cols];
+        let matrix_view = MatrixMutView {
+            rows: row_idx - 1,
+            cols: self.cols,
+            data: before,
+        };
+        (matrix_view, row)
+    }
 }
 
 impl Matrix<usize> {
     pub fn zeros(shape: [usize; 2]) -> Self {
-        let data = vec![0; shape[0] * shape[1]];
+        Self::from_elem(shape, 0)
+    }
+
+    pub fn from_elem(shape: [usize; 2], elem: usize) -> Self {
+        let rows = shape[0];
+        let cols = shape[1];
+        let data = vec![elem; rows * cols];
         Self {
-            rows: shape[0],
-            cols: shape[1],
+            rows,
+            cols,
+            elem,
             data,
         }
     }
@@ -89,6 +121,14 @@ impl Matrix<usize> {
     pub fn resize_rows(&mut self, rows: usize) {
         self.rows = rows;
         self.data.resize(rows * self.cols, 0)
+    }
+}
+
+impl<'a, E> MatrixMutView<'a, E> {
+    pub fn row(&'a self, row: usize) -> &[E] {
+        let start = row * self.cols;
+        let end = (row + 1) * self.cols;
+        &self.data[start..end]
     }
 }
 
@@ -106,6 +146,30 @@ impl<E> Index<[usize; 2]> for Matrix<E> {
 }
 
 impl<E> IndexMut<[usize; 2]> for Matrix<E> {
+    fn index_mut(&mut self, index: [usize; 2]) -> &mut Self::Output {
+        let idx = index[0] * self.cols + index[1];
+        // &mut self.data[idx]
+        // TODO this is really naughty thing and should not be done this way....
+        // but it brings a nice performance boost. Change to better unsafe encapsulation
+        // in future
+        unsafe { self.data.get_unchecked_mut(idx) }
+    }
+}
+
+impl<E> Index<[usize; 2]> for MatrixMutView<'_, E> {
+    type Output = E;
+
+    fn index(&self, index: [usize; 2]) -> &Self::Output {
+        let idx = index[0] * self.cols + index[1];
+        // &self.data[idx]
+        // TODO this is really naughty thing and should not be done this way....
+        // but it brings a nice performance boost. Change to better unsafe encapsulation
+        // in future
+        unsafe { self.data.get_unchecked(idx) }
+    }
+}
+
+impl<E> IndexMut<[usize; 2]> for MatrixMutView<'_, E> {
     fn index_mut(&mut self, index: [usize; 2]) -> &mut Self::Output {
         let idx = index[0] * self.cols + index[1];
         // &mut self.data[idx]

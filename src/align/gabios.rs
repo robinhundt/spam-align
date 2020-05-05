@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, min, Ordering};
 use std::ops::Not;
 
 use itertools::repeat_n;
@@ -28,20 +28,13 @@ pub struct Closure {
     /// they are indexed with a eq class id and a sequence id
     succ_frontier: Matrix<usize>,
 
-    /// these might be used to as buffers storing frontiers
-    /// which are potentially changed by adding the current positions
-    /// to the alignment
-    left1: Vec<usize>,
-    left2: Vec<usize>,
-    right1: Vec<usize>,
-    right2: Vec<usize>,
-
     /// This temporarily stores information about which pred/succ
     /// frontiers to update. First the necessary changes are determined
     /// and saved in this vec and then they are applied. This is needed
     /// because changing the frontiers while determining which ones need
     /// changing conflicts.
-    frontier_ops: Vec<[usize; 3]>,
+    pred_frontier_ops: Vec<[usize; 3]>,
+    succ_frontier_ops: Vec<[usize; 3]>,
 }
 
 struct Sequence {
@@ -93,27 +86,20 @@ impl Closure {
         let nbr_seqs = sequences.len();
 
         let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
-        let succ_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
+        let succ_frontier = Matrix::from_elem([max_length + 2, nbr_seqs], usize::MAX);
         let alig_set = Matrix::zeros([max_length + 2, nbr_seqs]);
 
-        let left1 = vec![0; nbr_seqs];
-        let left2 = vec![0; nbr_seqs];
-        let right1 = vec![0; nbr_seqs];
-        let right2 = vec![0; nbr_seqs];
-
-        let frontier_ops = vec![];
+        let pred_frontier_ops = vec![];
+        let succ_frontier_ops = vec![];
         Self {
             sequences,
             pred_frontier,
             succ_frontier,
             alig_set,
-            left1,
             nbr_alig_sets: 0,
             old_nbr_alig_sets: 0,
-            left2,
-            right1,
-            right2,
-            frontier_ops,
+            pred_frontier_ops,
+            succ_frontier_ops,
         }
     }
 
@@ -298,51 +284,18 @@ impl Closure {
             (ng, nd)
         };
 
-        let (ng1, nd1) = lookup_alig_set(n1, a);
-        let (ng2, nd2) = lookup_alig_set(n2, b);
-
-        let init_left = |ng: usize, left: &mut [usize], pred_frontier: &Matrix<usize>| {
-            if ng == 0 {
-                left.iter_mut().for_each(|x| *x = 0);
-            } else {
-                let pred_frontier = pred_frontier.row(ng);
-                left.iter_mut()
-                    .zip(pred_frontier)
-                    .for_each(|(g1, pred)| *g1 = *pred);
-            }
-        };
-
-        init_left(ng1, &mut self.left1, &self.pred_frontier);
-        init_left(ng2, &mut self.left2, &self.pred_frontier);
-
-        let init_right = |nd: usize,
-                          right: &mut [usize],
-                          sequences: &[Sequence],
-                          succ_frontier: &Matrix<usize>| {
-            if nd == 0 {
-                right
-                    .iter_mut()
-                    .zip(sequences)
-                    .for_each(|(d1, seq)| *d1 = seq.len() + 1);
-            } else {
-                let succ_frontier = succ_frontier.row(nd);
-                right
-                    .iter_mut()
-                    .zip(succ_frontier)
-                    .for_each(|(d1, succ)| *d1 = *succ);
-            }
-        };
-
-        init_right(nd1, &mut self.right1, &self.sequences, &self.succ_frontier);
-        init_right(nd2, &mut self.right2, &self.sequences, &self.succ_frontier);
-
-        self.left1[a.seq] = a.pos;
-        self.right1[a.seq] = a.pos;
-
-        self.left2[b.seq] = b.pos;
-        self.right2[b.seq] = b.pos;
+        let (n_left1, n_right1) = lookup_alig_set(n1, a);
+        let (n_left2, n_right2) = lookup_alig_set(n2, b);
 
         let nn = self.nbr_alig_sets + 1;
+        let (mut sub_mat_pred, nn_pred) = self.pred_frontier.split_at_mut(nn);
+        let (mut sub_mat_succ, nn_succ) = self.succ_frontier.split_at_mut(nn);
+        let left1 = sub_mat_pred.row(n_left1);
+        let left2 = sub_mat_pred.row(n_left2);
+
+        let right1 = sub_mat_succ.row(n_right1);
+        let right2 = sub_mat_succ.row(n_right2);
+
         for x in 0..self.sequences.len() {
             self.alig_set[[nn, x]] = 0;
             if n1 > 0 && self.alig_set[[n1, x]] > 0 {
@@ -352,20 +305,20 @@ impl Closure {
             }
 
             if self.alig_set[[nn, x]] == 0 {
-                self.pred_frontier[[nn, x]] = std::cmp::max(self.left1[x], self.left2[x]);
-                self.succ_frontier[[nn, x]] = std::cmp::min(self.right1[x], self.right2[x]);
+                nn_pred[x] = max(left1[x], left2[x]);
+                nn_succ[x] = min(right1[x], right2[x]);
             } else {
                 let front = self.alig_set[[nn, x]];
-                self.pred_frontier[[nn, x]] = front;
-                self.succ_frontier[[nn, x]] = front;
+                nn_pred[x] = front;
+                nn_succ[x] = front;
             }
         }
-        self.pred_frontier[[nn, a.seq]] = a.pos;
-        self.succ_frontier[[nn, a.seq]] = a.pos;
+        nn_pred[a.seq] = a.pos;
+        nn_succ[a.seq] = a.pos;
         self.alig_set[[nn, a.seq]] = a.pos;
 
-        self.pred_frontier[[nn, b.seq]] = b.pos;
-        self.succ_frontier[[nn, b.seq]] = b.pos;
+        nn_pred[b.seq] = b.pos;
+        nn_succ[b.seq] = b.pos;
         self.alig_set[[nn, b.seq]] = b.pos;
 
         for x in 0..self.sequences.len() {
@@ -378,22 +331,18 @@ impl Closure {
         // change pred and succ frontiers for all eq classes != nn
         // if necessary
 
-        self.frontier_ops.clear();
+        self.pred_frontier_ops.clear();
 
         for x in 0..self.sequences.len() {
-            if self.right1[x] == self.right2[x] {
+            if right1[x] == right2[x] {
                 continue;
             }
             for y in 0..self.sequences.len() {
-                let mut k = self.succ_frontier[[nn, x]];
+                let mut k = nn_succ[x];
                 if k == self.alig_set[[nn, x]] {
                     // eq class nn is directly aligned with pos k in seq x
                     // so we take the the pos of the next aligned pos after k
                     k = self.sequences[x].succ_alig_set_pos[k];
-                }
-
-                if k > self.sequences[x].len() {
-                    continue;
                 }
 
                 // k is the nearest succ_frontier position in x from the perspective
@@ -403,11 +352,11 @@ impl Closure {
                 // (so from [x, k] to y) is less than the pred frontier off nn to y
                 // we save the need to change the bound from n to y to the value of
                 // nn_to_y in self.frontier_ops
-                let nn_to_y = self.pred_frontier[[nn, y]];
+                let nn_to_y = nn_pred[y];
                 while k > 0 {
                     let n = self.sequences[x].alig_set_nbr[k];
-                    if self.pred_frontier[[n, y]] < nn_to_y {
-                        self.frontier_ops.push([n, y, nn_to_y]);
+                    if sub_mat_pred[[n, y]] < nn_to_y {
+                        self.pred_frontier_ops.push([n, y, nn_to_y]);
                         k = self.sequences[x].succ_alig_set_pos[k];
                     } else {
                         break;
@@ -415,28 +364,24 @@ impl Closure {
                 }
             }
         }
-        let pred_frontier = &mut self.pred_frontier;
-        self.frontier_ops.iter().for_each(|[n, y, new_front]| {
-            pred_frontier[[*n, *y]] = *new_front;
-        });
 
-        self.frontier_ops.clear();
+        self.succ_frontier_ops.clear();
 
         for x in 0..self.sequences.len() {
-            if self.left1[x] == self.left2[x] {
+            if left1[x] == left2[x] {
                 continue;
             }
             for y in 0..self.sequences.len() {
-                let mut k = self.pred_frontier[[nn, x]];
+                let mut k = nn_pred[x];
                 if k > 0 && k == self.alig_set[[nn, x]] {
                     k = self.sequences[x].pred_alig_set_pos[k];
                 }
 
-                let nn_to_y = self.succ_frontier[[nn, y]];
+                let nn_to_y = nn_succ[y];
                 while k > 0 {
                     let n = self.sequences[x].alig_set_nbr[k];
-                    if self.succ_frontier[[n, y]] > nn_to_y {
-                        self.frontier_ops.push([n, y, nn_to_y]);
+                    if sub_mat_succ[[n, y]] > nn_to_y {
+                        self.succ_frontier_ops.push([n, y, nn_to_y]);
                         k = self.sequences[x].pred_alig_set_pos[k];
                     } else {
                         break;
@@ -444,9 +389,12 @@ impl Closure {
                 }
             }
         }
-        let succ_frontier = &mut self.succ_frontier;
-        self.frontier_ops.iter().for_each(|[n, y, new_front]| {
-            succ_frontier[[*n, *y]] = *new_front;
+
+        self.pred_frontier_ops.iter().for_each(|[n, y, new_front]| {
+            sub_mat_pred[[*n, *y]] = *new_front;
+        });
+        self.succ_frontier_ops.iter().for_each(|[n, y, new_front]| {
+            sub_mat_succ[[*n, *y]] = *new_front;
         });
 
         let mut update_sequences = |n: usize, site: Site| {
@@ -541,22 +489,6 @@ fn partition<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: F) -> usize {
     }
     data.swap(i, pivot_idx);
     i
-
-    // loop {
-    //     i += 1;
-    //     let mut i = i as usize;
-    //     while cmp(&data[i], &data[pivot_idx]) == Ordering::Less {
-    //         i += 1;
-    //     }
-    //     j -= 1;
-    //     while cmp(&data[j], &data[pivot_idx]) == Ordering::Greater {
-    //         j -= 1;
-    //     }
-    //     if i >= j {
-    //         return j;
-    //     }
-    //     data.swap(i, j);
-    // }
 }
 
 #[cfg(test)]

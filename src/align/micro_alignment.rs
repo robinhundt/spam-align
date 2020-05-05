@@ -103,22 +103,15 @@ pub fn construct_micro_alignments_from_patterns<'a>(
                 .into_iter()
                 .group_by(|pattern_match| pattern_match.key)
                 .into_iter()
-                .flat_map(
-                    move |(_, match_group)| -> Box<dyn Iterator<Item = ScoredMicroAlignment>> {
-                        let match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
-                        let mut scored_combinations = generate_combinations(match_group)
-                            .map(|combination| {
-                                score_match_combination(score_fn, combination, sequences, pattern)
-                            })
-                            .collect_vec();
-                        if one_to_one_mapping {
-                            scored_combinations = generate_one_to_one_mapping(scored_combinations);
-                            Box::new(scored_combinations.into_iter())
-                        } else {
-                            Box::new(scored_combinations.into_iter())
-                        }
-                    },
-                )
+                .flat_map(move |(_, match_group)| {
+                    let match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
+                    let combinations = generate_combinations(match_group)
+                        .map(|combination| {
+                            score_match_combination(score_fn, combination, sequences, pattern)
+                        })
+                        .collect_vec();
+                    combinations.into_iter()
+                })
                 .collect_vec()
                 .into_iter()
         })
@@ -213,47 +206,6 @@ fn score_match_combination(
         },
         score: msa_score,
     }
-}
-
-fn generate_one_to_one_mapping(mut data: Vec<ScoredMicroAlignment>) -> Vec<ScoredMicroAlignment> {
-    // TODO this method seems overly complex and could likely be improved
-    data.sort_unstable_by_key(|ma| {
-        BTreeSet::from_iter(
-            ma.micro_alignment
-                .start_sites
-                .iter()
-                .map(|start_site| start_site.seq),
-        )
-    });
-    let ma_in_same_seqs = data.into_iter().group_by(|ma| {
-        FxHashSet::from_iter(
-            ma.micro_alignment
-                .start_sites
-                .iter()
-                .map(|start_site| start_site.seq),
-        )
-    });
-    let mut one_to_one_mapping = vec![];
-    for (_, micro_alignments) in ma_in_same_seqs.into_iter() {
-        let mut micro_alignments = micro_alignments.collect_vec();
-        micro_alignments.sort_unstable_by_key(|ma: &ScoredMicroAlignment| ma.score);
-        while let Some(micro_alignment) = micro_alignments.pop() {
-            let diag_start_sites =
-                FxHashSet::from_iter(micro_alignment.micro_alignment.start_sites.iter());
-            // TODO here the retain method could be used
-            micro_alignments = micro_alignments
-                .into_iter()
-                .filter(|el| {
-                    let el_start_sites =
-                        FxHashSet::from_iter(el.micro_alignment.start_sites.iter());
-                    diag_start_sites.is_disjoint(&el_start_sites)
-                })
-                .collect();
-            one_to_one_mapping.push(micro_alignment);
-        }
-    }
-
-    one_to_one_mapping
 }
 
 #[cfg(test)]
@@ -355,60 +307,5 @@ mod tests {
         // ];
 
         assert_eq!(generate_combinations(match_group).collect_vec(), expected)
-    }
-
-    #[test]
-    fn one_to_one_mapping() {
-        macro_rules! s {
-            ($seq:expr;$pos:expr) => {
-                Site {
-                    seq: $seq,
-                    pos: $pos
-                }
-            };
-            ($len:expr, $score:expr, [$($seq:expr;$pos:expr),+]) => {
-                {
-                    let start_sites = SmallVec::from_vec(
-                        vec![$(s!($seq;$pos),)+]
-                    );
-                    ScoredMicroAlignment {
-                        micro_alignment: MicroAlignment {
-                            start_sites: start_sites,
-                            k: $len
-                        },
-                        score: $score
-                    }
-                }
-            };
-        }
-
-        let scored_micro_alignment = vec![
-            s!(5, 10, [1;1, 2;3, 4;5]),
-            s!(5, 15, [1;1, 2;30, 4;50]),
-            s!(5, 5, [6;1, 7;3]),
-            s!(5, 8, [6;10, 7;10]),
-        ];
-
-        let expected_mapping = FxHashSet::from_iter(
-            vec![
-                s!(5, 15, [1;1, 2;30, 4;50]),
-                s!(5, 5, [6;1, 7;3]),
-                s!(5, 8, [6;10, 7;10]),
-            ]
-            .into_iter(),
-        );
-        assert_eq!(
-            FxHashSet::from_iter(generate_one_to_one_mapping(scored_micro_alignment).into_iter()),
-            expected_mapping
-        );
-
-        let scored_micro_alignment = vec![s!(1, 10, [1;1, 2;1]), s!(1, 8, [2;1, 3;1])];
-
-        let expected_mapping = scored_micro_alignment.clone();
-
-        assert_eq!(
-            generate_one_to_one_mapping(scored_micro_alignment),
-            expected_mapping
-        );
     }
 }
