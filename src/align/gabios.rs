@@ -33,10 +33,12 @@ pub struct Closure {
     /// and saved in this vec and then they are applied. This is needed
     /// because changing the frontiers while determining which ones need
     /// changing conflicts.
-    pred_frontier_ops: Vec<[usize; 3]>,
-    succ_frontier_ops: Vec<[usize; 3]>,
+    pred_frontier_ops: Vec<FrontierOp>,
+    succ_frontier_ops: Vec<FrontierOp>,
 }
 
+// Sequences is a struct of Matrices as opposed to a Vec of Structs of Vecs
+// as in the original Gabios Lib implementation to improve cache friendliness
 struct Sequences {
     lengths: Vec<usize>,
     /// index with seq pos, stores id of alig set this site belongs to
@@ -47,10 +49,10 @@ struct Sequences {
     succ_alig_set_pos: Matrix<usize>,
 }
 
-impl Sequences {
-    fn len(&self) -> usize {
-        self.lengths.len()
-    }
+struct FrontierOp {
+    eq_class: usize,
+    seq: usize,
+    new_frontier: usize,
 }
 
 /// Wrapper for a site whose position is increased by 1
@@ -58,25 +60,11 @@ impl Sequences {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 struct ShiftedSite(Site);
 
-impl From<Site> for ShiftedSite {
-    fn from(mut site: Site) -> Self {
-        site.pos += 1;
-        ShiftedSite(site)
-    }
-}
-
-impl From<ShiftedSite> for Site {
-    fn from(mut site: ShiftedSite) -> Self {
-        site.0.pos -= 1;
-        site.0
-    }
-}
-
 impl Closure {
     pub fn new(seq_lengths: &[usize]) -> Self {
         let &max_length = seq_lengths.iter().max().expect("No sequences");
-        let sequences = Closure::init_sequences(seq_lengths);
-        let nbr_seqs = sequences.lengths.len();
+        let sequences = Sequences::new(seq_lengths);
+        let nbr_seqs = sequences.len();
 
         let pred_frontier = Matrix::zeros([max_length + 2, nbr_seqs]);
         let succ_frontier = Matrix::from_elem([max_length + 2, nbr_seqs], usize::MAX);
@@ -93,17 +81,6 @@ impl Closure {
             old_nbr_alig_sets: 0,
             pred_frontier_ops,
             succ_frontier_ops,
-        }
-    }
-
-    fn init_sequences(seq_lengths: &[usize]) -> Sequences {
-        let max_len = seq_lengths.iter().max().expect("No sequences") + 2;
-        let mat = Matrix::zeros([seq_lengths.len(), max_len]);
-        Sequences {
-            lengths: seq_lengths.to_vec(),
-            alig_set_nbr: mat.clone(),
-            pred_alig_set_pos: mat.clone(),
-            succ_alig_set_pos: mat,
         }
     }
 
@@ -345,7 +322,7 @@ impl Closure {
                 while k > 0 {
                     let n = self.sequences.alig_set_nbr[[x, k]];
                     if sub_mat_pred[[n, y]] < nn_to_y {
-                        self.pred_frontier_ops.push([n, y, nn_to_y]);
+                        self.pred_frontier_ops.push(FrontierOp::new(n, y, nn_to_y));
                         k = self.sequences.succ_alig_set_pos[[x, k]];
                     } else {
                         break;
@@ -370,7 +347,7 @@ impl Closure {
                 while k > 0 {
                     let n = self.sequences.alig_set_nbr[[x, k]];
                     if sub_mat_succ[[n, y]] > nn_to_y {
-                        self.succ_frontier_ops.push([n, y, nn_to_y]);
+                        self.succ_frontier_ops.push(FrontierOp::new(n, y, nn_to_y));
                         k = self.sequences.pred_alig_set_pos[[x, k]];
                     } else {
                         break;
@@ -379,12 +356,24 @@ impl Closure {
             }
         }
 
-        self.pred_frontier_ops.iter().for_each(|[n, y, new_front]| {
-            sub_mat_pred[[*n, *y]] = *new_front;
-        });
-        self.succ_frontier_ops.iter().for_each(|[n, y, new_front]| {
-            sub_mat_succ[[*n, *y]] = *new_front;
-        });
+        self.pred_frontier_ops.iter().for_each(
+            |FrontierOp {
+                 eq_class,
+                 seq,
+                 new_frontier,
+             }| {
+                sub_mat_pred[[*eq_class, *seq]] = *new_frontier;
+            },
+        );
+        self.succ_frontier_ops.iter().for_each(
+            |FrontierOp {
+                 eq_class,
+                 seq,
+                 new_frontier,
+             }| {
+                sub_mat_succ[[*eq_class, *seq]] = *new_frontier;
+            },
+        );
 
         let mut update_sequences = |n: usize, site: Site| {
             if n != 0 {
@@ -415,7 +404,7 @@ impl Closure {
         update_sequences(n1, a);
         update_sequences(n2, b);
 
-        let (n1, n2) = if n1 > n2 { (n2, n1) } else { (n1, n2) };
+        let (n1, n2) = min_max(n1, n2);
 
         if n2 == 0 {
             self.nbr_alig_sets += 1;
@@ -432,6 +421,7 @@ impl Closure {
         }
     }
 
+    ///
     fn move_alig_set(&mut self, n1: usize, n2: usize) {
         for x in 0..self.sequences.len() {
             let k = self.alig_set[[n2, x]];
@@ -453,6 +443,47 @@ impl Closure {
         self.succ_frontier.resize_rows(new_rows);
         self.alig_set.resize_rows(new_rows);
         self.old_nbr_alig_sets = self.nbr_alig_sets;
+    }
+}
+
+impl Sequences {
+    fn new(seq_lengths: &[usize]) -> Self {
+        let max_len = seq_lengths.iter().max().expect("No sequences") + 2;
+        let mat = Matrix::zeros([seq_lengths.len(), max_len]);
+        Sequences {
+            lengths: seq_lengths.to_vec(),
+            alig_set_nbr: mat.clone(),
+            pred_alig_set_pos: mat.clone(),
+            succ_alig_set_pos: mat,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.lengths.len()
+    }
+}
+
+impl FrontierOp {
+    fn new(eq_class: usize, seq: usize, new_frontier: usize) -> Self {
+        Self {
+            eq_class,
+            seq,
+            new_frontier,
+        }
+    }
+}
+
+impl From<Site> for ShiftedSite {
+    fn from(mut site: Site) -> Self {
+        site.pos += 1;
+        ShiftedSite(site)
+    }
+}
+
+impl From<ShiftedSite> for Site {
+    fn from(mut site: ShiftedSite) -> Self {
+        site.0.pos -= 1;
+        site.0
     }
 }
 
@@ -478,6 +509,14 @@ fn partition<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: F) -> usize {
     }
     data.swap(i, pivot_idx);
     i
+}
+
+fn min_max(a: usize, b: usize) -> (usize, usize) {
+    if a > b {
+        (b, a)
+    } else {
+        (a, b)
+    }
 }
 
 #[cfg(test)]
