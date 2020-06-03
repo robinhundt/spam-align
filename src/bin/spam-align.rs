@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use spam_align::align::{align, AlignProgress};
+use spam_align::align::{align, AlignProgress, Strategy};
 use spam_align::spaced_word::read_patterns_from_file;
 use spam_align::{format_as_fasta, read_fasta, write_as_fasta, Sequence};
 use structopt::StructOpt;
@@ -19,8 +19,12 @@ struct Opt {
     #[structopt(short = "o", long, name = "OUT", parse(from_os_str))]
     out_file: Option<PathBuf>,
     /// Show progress information
-    #[structopt(short = "p", parse(from_flag))]
+    #[structopt(short = "p", long, parse(from_flag))]
     show_progress: AlignProgress,
+    /// Use micro alignments with a dynamic dimension to construct
+    /// alignment
+    #[structopt(short = "d", long, parse(from_flag))]
+    dyn_dim: Strategy,
 }
 
 fn main() -> Result<()> {
@@ -28,7 +32,7 @@ fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
     let mut sequences = load_sequences(opt.in_file)?;
     let patterns = read_patterns_from_file(opt.pattern_set_path)?;
-    align(&mut sequences, &patterns, opt.show_progress);
+    align(&mut sequences, &patterns, opt.dyn_dim, opt.show_progress);
     match opt.out_file {
         Some(path) => write_as_fasta(path, &sequences)?,
         None => println!("{}", format_as_fasta(&sequences)),

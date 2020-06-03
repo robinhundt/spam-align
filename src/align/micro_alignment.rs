@@ -1,10 +1,9 @@
-use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
-use fxhash::FxHashSet;
 use itertools::Itertools;
 use smallvec::SmallVec;
 
+use crate::align::Strategy;
 use crate::spaced_word::{MatchWord, Pattern};
 use crate::Sequence;
 
@@ -78,12 +77,10 @@ pub struct Match {
     start_site: Site,
 }
 
-pub fn construct_micro_alignments_from_patterns<'a>(
+pub fn construct_2dim_micro_alignments<'a>(
     patterns: &'a [Pattern],
     sequences: &'a [Sequence],
     score_fn: fn(&[&[u8]]) -> i32,
-    one_to_one_mapping: bool,
-    //    max_n: Option<usize>,
 ) -> impl Iterator<Item = ScoredMicroAlignment> + 'a {
     let max_seq_len = sequences
         .iter()
@@ -105,12 +102,43 @@ pub fn construct_micro_alignments_from_patterns<'a>(
                 .into_iter()
                 .flat_map(move |(_, match_group)| {
                     let match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
-                    let combinations = generate_combinations(match_group)
-                        .map(|combination| {
-                            score_match_combination(score_fn, combination, sequences, pattern)
-                        })
-                        .collect_vec();
-                    combinations.into_iter()
+                    generate_2_dim_combinations(match_group).map(move |combination| {
+                        score_match_combination(score_fn, combination, sequences, pattern)
+                    })
+                })
+                .collect_vec()
+                .into_iter()
+        })
+}
+
+pub fn construct_dyn_dim_micro_alignments<'a>(
+    patterns: &'a [Pattern],
+    sequences: &'a [Sequence],
+    score_fn: fn(&[&[u8]]) -> i32,
+) -> impl Iterator<Item = ScoredMicroAlignment> + 'a {
+    let max_seq_len = sequences
+        .iter()
+        .map(|seq| seq.len())
+        .max()
+        .expect("Can not construct diagonals from empty sequences");
+    patterns
+        .iter()
+        .map(move |pattern| {
+            (
+                pattern,
+                generate_sorted_matches(pattern, sequences, max_seq_len),
+            )
+        })
+        .flat_map(move |(pattern, matches)| {
+            matches
+                .into_iter()
+                .group_by(|pattern_match| pattern_match.key)
+                .into_iter()
+                .flat_map(move |(_, match_group)| {
+                    let match_group: SmallVec<[Match; 8]> = SmallVec::from_iter(match_group);
+                    generate_dyn_dim_combinations(match_group).map(move |combination| {
+                        score_match_combination(score_fn, combination, sequences, pattern)
+                    })
                 })
                 .collect_vec()
                 .into_iter()
@@ -140,47 +168,55 @@ fn generate_sorted_matches(
     pattern_matches
 }
 
-fn generate_combinations(
-    mut match_group: SmallVec<[Match; 8]>,
+fn generate_2_dim_combinations(
+    match_group: SmallVec<[Match; 8]>,
 ) -> impl Iterator<Item = Vec<Match>> {
-    // match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
-    // let match_group = match_group;
-    // if match_group
-    //     .iter()
-    //     .group_by(|word_match| word_match.start_site.seq)
-    //     .into_iter()
-    //     .map(|a| a.1.count() as u128)
-    //     .product::<u128>()
-    //     > 100
+    match_group
+        .into_iter()
+        .combinations(2)
+        .filter(|combination| combination[0].start_site.seq != combination[1].start_site.seq)
+}
+
+fn generate_dyn_dim_combinations(
+    mut match_group: SmallVec<[Match; 8]>,
+) -> Box<dyn Iterator<Item = Vec<Match>>> {
+    match_group.sort_unstable_by_key(|word_match| word_match.start_site.seq);
+    let match_group = match_group;
+    if match_group
+        .iter()
+        .group_by(|word_match| word_match.start_site.seq)
+        .into_iter()
+        .map(|a| a.1.count() as u128)
+        .product::<u128>()
+        > 100
     {
-        // return Box::new(
-        match_group
-            .into_iter()
-            .combinations(2)
-            .filter(|combination| combination[0].start_site.seq != combination[1].start_site.seq)
-        // );
+        return Box::new(
+            match_group
+                .into_iter()
+                .combinations(2)
+                .filter(|combination| {
+                    combination[0].start_site.seq != combination[1].start_site.seq
+                }),
+        );
     }
-    // Box::new(
-    //     match_group
-    //         .into_iter()
-    //         .group_by(|word_match| word_match.start_site.seq)
-    //         .into_iter()
-    //         .map(|(_, group)| group.collect_vec())
-    //         .multi_cartesian_product()
-    //         .filter(|combination| {
-    //             let unique_seq_cnt = combination
-    //                 .iter()
-    //                 .unique_by(|match_word| match_word.start_site.seq)
-    //                 .count();
-    //             assert_eq!(
-    //                 unique_seq_cnt,
-    //                 combination.len(),
-    //                 "Combination has sites with duplicate seq: {:?}",
-    //                 &combination
-    //             );
-    //             combination.len() > 1
-    //         }),
-    // )
+    Box::new(
+        match_group
+            .clone()
+            .into_iter()
+            .group_by(|word_match| word_match.start_site.seq)
+            .into_iter()
+            .map(|(_, group)| group.collect_vec())
+            .multi_cartesian_product()
+            .filter(|combination| combination.len() > 1)
+            .chain(
+                match_group
+                    .into_iter()
+                    .combinations(2)
+                    .filter(|combination| {
+                        combination[0].start_site.seq != combination[1].start_site.seq
+                    }),
+            ),
+    )
 }
 
 fn score_match_combination(
@@ -205,6 +241,16 @@ fn score_match_combination(
             k: pattern.len(),
         },
         score: msa_score,
+    }
+}
+
+impl From<bool> for Strategy {
+    fn from(val: bool) -> Self {
+        if val {
+            Strategy::DynDim
+        } else {
+            Strategy::TwoDim
+        }
     }
 }
 
@@ -306,6 +352,9 @@ mod tests {
         //     vec![m!(2), m!(3)],
         // ];
 
-        assert_eq!(generate_combinations(match_group).collect_vec(), expected)
+        assert_eq!(
+            generate_2_dim_combinations(match_group).collect_vec(),
+            expected
+        )
     }
 }

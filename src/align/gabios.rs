@@ -18,8 +18,6 @@ pub struct Closure {
 
     /// How many eq classes are there in the current iteration.
     nbr_alig_sets: usize,
-    /// How many eq classes are there in the previous iteration.
-    old_nbr_alig_sets: usize,
 
     /// these are prob used to save the actual frontiers,
     /// they are indexed with a eq class id and a sequence id
@@ -49,10 +47,17 @@ struct Sequences {
     succ_alig_set_pos: Matrix<usize>,
 }
 
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 struct FrontierOp {
-    eq_class: usize,
     seq: usize,
+    eq_class: usize,
     new_frontier: usize,
+}
+
+enum Alignable {
+    True,
+    False,
+    AlreadyAligned,
 }
 
 /// Wrapper for a site whose position is increased by 1
@@ -78,7 +83,6 @@ impl Closure {
             succ_frontier,
             alig_set,
             nbr_alig_sets: 0,
-            old_nbr_alig_sets: 0,
             pred_frontier_ops,
             succ_frontier_ops,
         }
@@ -92,11 +96,11 @@ impl Closure {
         let mut sites_to_add: SmallVec<[(ShiftedSite, ShiftedSite); 15]> = SmallVec::new();
         for (a, b) in micro_alignment.site_pair_iter() {
             let (a, b) = (a.into(), b.into());
-            if !self.alignable(a, b) {
-                return false;
-            }
-            if !self.aligned(a, b) {
-                sites_to_add.push((a, b));
+            let alignable = self.alignable(a, b);
+            match alignable {
+                Alignable::True => sites_to_add.push((a, b)),
+                Alignable::False => return false,
+                Alignable::AlreadyAligned => continue,
             }
         }
         for (a, b) in sites_to_add {
@@ -106,43 +110,47 @@ impl Closure {
         added
     }
 
-    fn aligned(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
-        let (a, b) = (a.0, b.0);
-        a.seq == b.seq && a.pos == b.pos
-            || self.sequences.alig_set_nbr[[a.seq, a.pos]] != 0
-                && self.sequences.alig_set_nbr[[a.seq, a.pos]]
-                    == self.sequences.alig_set_nbr[[b.seq, b.pos]]
-    }
-
     pub fn less(&self, left: Site, right: Site) -> bool {
         let (left, right) = (left.into(), right.into());
         self.path_exists(left, right)
     }
 
-    fn alignable(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
+    /// Checks whether two sites are alignable
+    fn alignable(&self, a: ShiftedSite, b: ShiftedSite) -> Alignable {
+        // sites a and b are alignable if path(a, b) <=> path(b, a)
         if self.path_exists(a, b) {
-            self.path_exists(b, a)
+            // if there is a path from a to b and b to a they are
+            // already aligned and thus alignable
+            if self.path_exists(b, a) {
+                Alignable::AlreadyAligned
+            } else {
+                Alignable::False
+            }
+        } else if self.path_exists(b, a).not() {
+            Alignable::True
         } else {
-            self.path_exists(b, a).not()
+            Alignable::False
         }
     }
 
-    fn path_exists(&self, a: ShiftedSite, b: ShiftedSite) -> bool {
-        let (a, b) = (a.0, b.0);
-        if a.seq == b.seq {
-            return a.pos < b.pos;
+    /// Checks if there is a path in the alignment graph from the first
+    /// to the second site
+    fn path_exists(&self, from: ShiftedSite, to: ShiftedSite) -> bool {
+        let (from, to) = (from.0, to.0);
+        if from.seq == to.seq {
+            return from.pos < to.pos;
         }
-        let mut n2 = self.sequences.alig_set_nbr[[b.seq, b.pos]];
-        if n2 == 0 {
-            let k = self.sequences.pred_alig_set_pos[[b.seq, b.pos]];
+        let mut pred_alig_set_to = self.sequences.alig_set_nbr[[to.seq, to.pos]];
+        if pred_alig_set_to == 0 {
+            let k = self.sequences.pred_alig_set_pos[[to.seq, to.pos]];
             if k > 0 {
-                n2 = self.sequences.alig_set_nbr[[b.seq, k]];
+                pred_alig_set_to = self.sequences.alig_set_nbr[[to.seq, k]];
             }
         }
-        if n2 == 0 {
+        if pred_alig_set_to == 0 {
             false
         } else {
-            a.pos <= self.pred_frontier[[n2, a.seq]]
+            from.pos <= self.pred_frontier[[pred_alig_set_to, from.seq]]
         }
     }
 
@@ -172,6 +180,12 @@ impl Closure {
                 Ordering::Equal
             }
         });
+
+        // for seq in seqs.iter_mut() {
+        //     for residue in seq.data.iter_mut() {
+        //         residue.make_ascii_lowercase();
+        //     }
+        // }
 
         // This handles the actual gap insertion by iterating the eq classes
         // from smallest (meaning the left most) to highest,
@@ -218,10 +232,8 @@ impl Closure {
         }
     }
 
-    fn add_aligned_positions(&mut self, a: ShiftedSite, b: ShiftedSite) {
-        let (a, b) = (a.0, b.0);
-        let n1 = self.sequences.alig_set_nbr[[a.seq, a.pos]];
-        let n2 = self.sequences.alig_set_nbr[[b.seq, b.pos]];
+    fn add_aligned_positions(&mut self, s1: ShiftedSite, s2: ShiftedSite) {
+        let (s1, s2) = (s1.0, s2.0);
 
         // this condition is guaranteed by filtering the
         // micro alignment that is added in the `try_add_micro_alignment`
@@ -230,29 +242,37 @@ impl Closure {
         //     n1 != n2 || n1 == 0 || n2 == 0,
         //     "Sites must belong to different eq classes or at least one must not be aligned"
         // );
+
+        // this closure looks up the alignment set n of a site and the alignment sites
+        // that are closest and <= and >= than n. If site is aligned (n, n, n) is returned
+        // with n being the set of site
+        let lookup_alig_set = |site: Site| {
+            let n = self.sequences.alig_set_nbr[[site.seq, site.pos]];
+            if n != 0 {
+                return (n, n, n);
+            }
+            let mut n_left = n;
+            let mut n_right = n;
+            let k = self.sequences.pred_alig_set_pos[[site.seq, site.pos]];
+            if k > 0 {
+                n_left = self.sequences.alig_set_nbr[[site.seq, k]];
+            }
+            let k = self.sequences.succ_alig_set_pos[[site.seq, site.pos]];
+            if k > 0 {
+                n_right = self.sequences.alig_set_nbr[[site.seq, k]];
+            }
+            (n, n_left, n_right)
+        };
+
+        let (n1, n_left1, n_right1) = lookup_alig_set(s1);
+        let (n2, n_left2, n_right2) = lookup_alig_set(s2);
+
         if !(n1 != n2 || n1 == 0 || n2 == 0) {
             return;
         }
-
-        let lookup_alig_set = |n: usize, site: Site| {
-            let mut ng = n;
-            let mut nd = n;
-            if n == 0 {
-                let mut k = self.sequences.pred_alig_set_pos[[site.seq, site.pos]];
-                if k > 0 {
-                    ng = self.sequences.alig_set_nbr[[site.seq, k]];
-                }
-                k = self.sequences.succ_alig_set_pos[[site.seq, site.pos]];
-                if k > 0 {
-                    nd = self.sequences.alig_set_nbr[[site.seq, k]];
-                }
-            }
-            (ng, nd)
-        };
-
-        let (n_left1, n_right1) = lookup_alig_set(n1, a);
-        let (n_left2, n_right2) = lookup_alig_set(n2, b);
-
+        // nn is the index of the alignment set created by aligning
+        // s1 and s2, it might be moved at the end of the method if
+        // existing sets were merged
         let nn = self.nbr_alig_sets + 1;
         let (mut sub_mat_pred, nn_pred) = self.pred_frontier.split_at_mut(nn);
         let (mut sub_mat_succ, nn_succ) = self.succ_frontier.split_at_mut(nn);
@@ -262,6 +282,7 @@ impl Closure {
         let right1 = sub_mat_succ.row(n_right1);
         let right2 = sub_mat_succ.row(n_right2);
 
+        // initialize the alignment set nn
         for x in 0..self.sequences.len() {
             self.alig_set[[nn, x]] = 0;
             if n1 > 0 && self.alig_set[[n1, x]] > 0 {
@@ -279,13 +300,13 @@ impl Closure {
                 nn_succ[x] = front;
             }
         }
-        nn_pred[a.seq] = a.pos;
-        nn_succ[a.seq] = a.pos;
-        self.alig_set[[nn, a.seq]] = a.pos;
+        nn_pred[s1.seq] = s1.pos;
+        nn_succ[s1.seq] = s1.pos;
+        self.alig_set[[nn, s1.seq]] = s1.pos;
 
-        nn_pred[b.seq] = b.pos;
-        nn_succ[b.seq] = b.pos;
-        self.alig_set[[nn, b.seq]] = b.pos;
+        nn_pred[s2.seq] = s2.pos;
+        nn_succ[s2.seq] = s2.pos;
+        self.alig_set[[nn, s2.seq]] = s2.pos;
 
         for x in 0..self.sequences.len() {
             let k = self.alig_set[[nn, x]];
@@ -295,11 +316,13 @@ impl Closure {
         }
 
         // change pred and succ frontiers for all eq classes != nn
-        // if necessary
+        // if influenced by alignment of s1 and s2
 
         self.pred_frontier_ops.clear();
 
         for x in 0..self.sequences.len() {
+            // SAFETY: do not remove this, because succ frontiers are initialized
+            // with usize::MAX, removing this check will lead to buffer overflow
             if right1[x] == right2[x] {
                 continue;
             }
@@ -322,6 +345,8 @@ impl Closure {
                 while k > 0 {
                     let n = self.sequences.alig_set_nbr[[x, k]];
                     if sub_mat_pred[[n, y]] < nn_to_y {
+                        // frontier ops cannot be applied directly because
+                        // that would influence above if statement
                         self.pred_frontier_ops.push(FrontierOp::new(n, y, nn_to_y));
                         k = self.sequences.succ_alig_set_pos[[x, k]];
                     } else {
@@ -355,7 +380,6 @@ impl Closure {
                 }
             }
         }
-
         self.pred_frontier_ops.iter().for_each(
             |FrontierOp {
                  eq_class,
@@ -401,27 +425,35 @@ impl Closure {
             }
         };
 
-        update_sequences(n1, a);
-        update_sequences(n2, b);
+        update_sequences(n1, s1);
+        update_sequences(n2, s2);
 
-        let (n1, n2) = min_max(n1, n2);
+        let (n1, n2) = order(n1, n2);
 
         if n2 == 0 {
+            // implies that n1 == 0
             self.nbr_alig_sets += 1;
-            self.realloc();
+            self.resize();
         } else if n1 == 0 {
+            // implies that n2 != 0, which means that nn
+            // should be move into n2
             self.move_alig_set(n2, nn)
         } else {
+            // n1 != 0 && n2 != 0, which means
+            // nn is merged from n1 and n2, thus
+            // nn can be moved into n1 and the now last set
+            // self.nbr_alig_sets can be moved into n2 which
+            // is not needed anymore
+            // self.nbr_alig_sets is reduced by 1
             self.move_alig_set(n1, nn);
             if n2 < self.nbr_alig_sets {
                 self.move_alig_set(n2, self.nbr_alig_sets)
             }
             self.nbr_alig_sets -= 1;
-            self.realloc();
         }
     }
 
-    ///
+    /// Move the alignment set n2 **into** n1
     fn move_alig_set(&mut self, n1: usize, n2: usize) {
         for x in 0..self.sequences.len() {
             let k = self.alig_set[[n2, x]];
@@ -434,15 +466,11 @@ impl Closure {
         }
     }
 
-    fn realloc(&mut self) {
-        if self.nbr_alig_sets <= self.old_nbr_alig_sets {
-            return;
-        }
+    fn resize(&mut self) {
         let new_rows = self.nbr_alig_sets + 2;
         self.pred_frontier.resize_rows(new_rows);
         self.succ_frontier.resize_rows(new_rows);
         self.alig_set.resize_rows(new_rows);
-        self.old_nbr_alig_sets = self.nbr_alig_sets;
     }
 }
 
@@ -511,7 +539,8 @@ fn partition<T, F: Fn(&T, &T) -> Ordering>(data: &mut [T], cmp: F) -> usize {
     i
 }
 
-fn min_max(a: usize, b: usize) -> (usize, usize) {
+/// Return input swapped such that ret.0 is <= than ret.1
+fn order(a: usize, b: usize) -> (usize, usize) {
     if a > b {
         (b, a)
     } else {

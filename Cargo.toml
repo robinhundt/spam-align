@@ -28,5 +28,5 @@ harness = false
 
 [profile.release]
 # This is needed when running the clion profiler
-#debug = true
+debug = true
 

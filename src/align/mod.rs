@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::align::gabios::Closure as TransitiveClosure;
 use crate::align::micro_alignment::{
-    construct_micro_alignments_from_patterns, ScoredMicroAlignment,
+    construct_2dim_micro_alignments, construct_dyn_dim_micro_alignments, ScoredMicroAlignment,
 };
 use crate::score::score_prot_msa;
 use crate::spaced_word::Pattern;
@@ -20,12 +20,30 @@ pub enum AlignProgress {
     Hide,
 }
 
-pub fn align(sequences: &mut [Sequence], patterns: &[Pattern], progress: AlignProgress) {
+#[derive(Debug)]
+pub enum Strategy {
+    TwoDim,
+    DynDim,
+}
+
+pub fn align(
+    sequences: &mut [Sequence],
+    patterns: &[Pattern],
+    strategy: Strategy,
+    progress: AlignProgress,
+) {
     let diagonals = log_elapsed_time("Constructing diagonals", || {
-        let diagonals =
-            construct_micro_alignments_from_patterns(patterns, sequences, score_prot_msa, false);
-        let mut diagonals = diagonals.collect_vec();
-        diagonals.sort_by_cached_key(|diag| -diag.score);
+        let mut diagonals: Vec<_> = match strategy {
+            Strategy::TwoDim => {
+                construct_2dim_micro_alignments(patterns, sequences, score_prot_msa).collect()
+            }
+            Strategy::DynDim => {
+                construct_dyn_dim_micro_alignments(patterns, sequences, score_prot_msa).collect()
+            }
+        };
+        log_elapsed_time("|-> Sorting diagonals", || {
+            diagonals.sort_unstable_by_key(|diag| -diag.score);
+        });
         diagonals
     });
 
@@ -129,6 +147,10 @@ impl Matrix<usize> {
 }
 
 impl<'a, E> MatrixMutView<'a, E> {
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
     pub fn row(&'a self, row: usize) -> &[E] {
         let start = row * self.cols;
         let end = (row + 1) * self.cols;
@@ -146,6 +168,7 @@ impl<E: Clone> Index<[usize; 2]> for Matrix<E> {
         // but it brings a nice performance boost. Change to better unsafe encapsulation
         // in future
         unsafe { self.data.get_unchecked(idx) }
+        // &self.data[idx]
     }
 }
 
@@ -157,6 +180,7 @@ impl<E: Clone> IndexMut<[usize; 2]> for Matrix<E> {
         // but it brings a nice performance boost. Change to better unsafe encapsulation
         // in future
         unsafe { self.data.get_unchecked_mut(idx) }
+        // &mut self.data[idx]
     }
 }
 
@@ -170,6 +194,7 @@ impl<E> Index<[usize; 2]> for MatrixMutView<'_, E> {
         // but it brings a nice performance boost. Change to better unsafe encapsulation
         // in future
         unsafe { self.data.get_unchecked(idx) }
+        // &self.data[idx]
     }
 }
 
@@ -181,6 +206,7 @@ impl<E> IndexMut<[usize; 2]> for MatrixMutView<'_, E> {
         // but it brings a nice performance boost. Change to better unsafe encapsulation
         // in future
         unsafe { self.data.get_unchecked_mut(idx) }
+        // &mut self.data[idx]
     }
 }
 
