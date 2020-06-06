@@ -1,19 +1,39 @@
-# Spam Align
+# SpaM-Align
 
 In order to compile this program, the latest stable Rust toolchain is needed. Installing this can be conveniently done via the toolchain manager `rustup` [(Link)](https://rustup.rs/).  
 
 After having installed the latest stable toolchain, the program can be built and run by executing
 ```
-cargo run --release --bin stats -- --help
+cargo run --release -- --help
 ```
 
-Note that program specific parameters must be passed after the `--`.
+Note that program specific parameters must be passed after the `--`.  
+Alternatively the binary (called `spam-align`) can be installed by issuing:
+```
+cargo install --path .
+```
 
-In order to use the program the `bb3_release` folder of the BAliBASE version 3 dataset http://www.lbgi.fr/balibase/BalibaseDownload/BAliBASE_R1-5.tar.gz should be placed in a `data` directory within the root of this project. 
+## Tests
+
+The contained tests can be run by executing:
+```
+cargo test --release
+```
+Note that, while `--release` is not required, the tests take considerably longer if executed in debug mode.
+
+
+## Benchmarks
+
+There are some benchmarks located under `benches` which can be run with:
+```
+cargo bench
+``` 
+
+## Logging
+
+When setting the Env variable `RUST_LOG=info` the program will print some timing information.
+
 
 ## Notes
-The algorithm for checking and updating consistency bound is based on [GABIOS-LIB](gobics.de/burkhard/papers/jobim.pdf).  
-
-
-## Benchmakrk data todo
-OxBase
+The algorithm for checking and updating transitivity frontiers is a reimplementation and improvement ofgst
+ [GABIOS-LIB](gobics.de/burkhard/papers/jobim.pdf).  
