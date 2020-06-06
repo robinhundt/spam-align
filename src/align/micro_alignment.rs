@@ -7,10 +7,18 @@ use crate::align::Strategy;
 use crate::spaced_word::{MatchWord, Pattern};
 use crate::Sequence;
 
+// If anybody were to used this code again, it might be benefial to abstract
+// over micro alignment of different dimensionality. A trait like this might
+// be used
+// pub trait MicroAlignment {
+//     type Iter: Iterator<Item = [Site; 2]>;
+//     fn site_pair_iter(&self) -> Self::Iter;
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Represents a multidimensional diagonal over n sequences
-/// if <= 15 sequences are part of the diagonal the end sites are stored
-/// inline, otherwise they spi2 onto the heap
+/// if <= 2 sequences are part of the diagonal the end sites are stored
+/// inline, otherwise they spill onto the heap
 pub struct MicroAlignment {
     /// start points in sequences of the diagonal
     /// uses a small vec which stores the end sites inline
@@ -21,15 +29,6 @@ pub struct MicroAlignment {
 }
 
 impl MicroAlignment {
-    pub fn site_iter(&self) -> impl Iterator<Item = Site> + '_ {
-        self.start_sites.iter().flat_map(move |start_site| {
-            (start_site.pos..start_site.pos + self.k).map(move |pos| Site {
-                seq: start_site.seq,
-                pos,
-            })
-        })
-    }
-
     pub fn site_pair_iter(&self) -> impl Iterator<Item = (Site, Site)> + '_ {
         self.start_sites
             .iter()
