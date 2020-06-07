@@ -1,5 +1,7 @@
 # SpaM-Align
 
+![Rust](https://github.com/robinhundt/spam-align/workflows/Rust/badge.svg)
+
 In order to compile this program, the latest stable Rust toolchain is needed. Installing this can be conveniently done via the toolchain manager `rustup` [(Link)](https://rustup.rs/).  
 
 After having installed the latest stable toolchain, the program can be built and run by executing
